@@ -1,0 +1,23 @@
+[Unit]
+Description=Bot Discord VESPER RP (statut du serveur, joueurs, mises a jour)
+After=network-online.target vesper.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vesperbot
+Group=vesperbot
+WorkingDirectory=/opt/vesper-discord-bot
+EnvironmentFile=/opt/vesper-discord-bot/.env
+ExecStart=/usr/bin/node src/index.js
+Restart=always
+RestartSec=10
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/vesper-discord-bot/data
+
+[Install]
+WantedBy=multi-user.target

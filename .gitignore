@@ -1,0 +1,8 @@
+# Secrets et état : jamais dans le dépôt.
+.env
+bot/.env
+bot/data/
+data/
+node_modules/
+bot/node_modules/
+*.log
