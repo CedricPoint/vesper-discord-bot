@@ -13,6 +13,8 @@
 ---
 --- Points d'entrée (sous http://127.0.0.1:30120/vesper-discord/) :
 ---   GET  /etat?depuis=N   état complet + événements numérotés après N
+---   GET  /fiche?q=…       fiche complète d'un joueur (fiche.lua, commande /id)
+---   GET  /recherche?q=…   joueurs correspondants (autocomplétion de /id)
 ---   POST /annonce         {"message": "...", "auteur": "..."} → tchat en jeu
 ---   POST /webhooks        {"id": "ressource", "webhooks": {sujet: url}} → journaux
 ---                         (voir journaux.lua : les scripts déclarent leurs salons)
@@ -56,6 +58,7 @@ local function infoJoueur(src)
 
     for _, ident in ipairs(GetPlayerIdentifiers(src) or {}) do
         if ident:sub(1, 8) == 'discord:' then info.discord = ident:sub(9) end
+        if ident:sub(1, 8) == 'license:' then info.licence = ident end
     end
 
     if arrivees[id] then info.connecte_depuis = arrivees[id] end
@@ -74,11 +77,35 @@ local function infoJoueur(src)
             if okNom and type(nomRp) == 'string' and nomRp ~= '' then
                 info.personnage = nomRp
             end
+            -- Pour le journal des départs : avec quoi le joueur est parti.
+            local okL, liquide = pcall(xp.getAccount, 'money')
+            local okB, banque = pcall(xp.getAccount, 'bank')
+            if okL and type(liquide) == 'table' then info.liquide = tonumber(liquide.money) end
+            if okB and type(banque) == 'table' then info.banque = tonumber(banque.money) end
         end
     end
 
     connus[id] = info
     return info
+end
+
+-- Noms lisibles des causes de mort les plus courantes (GetPedCauseOfDeath
+-- rend un hachage d'arme). Le reste s'affiche « autre cause ».
+local CAUSES = {}
+for nom, libelle in pairs({
+    WEAPON_UNARMED = 'à mains nues', WEAPON_KNIFE = 'couteau', WEAPON_BAT = 'batte',
+    WEAPON_PISTOL = 'pistolet', WEAPON_COMBATPISTOL = 'pistolet de combat', WEAPON_STUNGUN = 'taser',
+    WEAPON_SMG = 'SMG', WEAPON_MICROSMG = 'micro-SMG', WEAPON_ASSAULTRIFLE = 'fusil d’assaut',
+    WEAPON_CARBINERIFLE = 'carabine', WEAPON_PUMPSHOTGUN = 'fusil à pompe', WEAPON_SNIPERRIFLE = 'fusil de précision',
+    WEAPON_RUN_OVER_BY_CAR = 'renversé par un véhicule', WEAPON_RAMMED_BY_CAR = 'percuté par un véhicule',
+    WEAPON_FALL = 'chute', WEAPON_DROWNING = 'noyade', WEAPON_DROWNING_IN_VEHICLE = 'noyade (véhicule)',
+    WEAPON_EXPLOSION = 'explosion', WEAPON_FIRE = 'feu', WEAPON_BLEEDING = 'hémorragie',
+    WEAPON_ANIMAL = 'animal', WEAPON_COUGAR = 'puma', WEAPON_BARBED_WIRE = 'barbelés',
+    WEAPON_ELECTRIC_FENCE = 'clôture électrique', WEAPON_EXHAUSTION = 'épuisement',
+}) do
+    local h = GetHashKey(nom)
+    CAUSES[h] = libelle
+    CAUSES[h < 0 and h + 4294967296 or h - 4294967296] = libelle
 end
 
 local function ressourcesLancees()
@@ -100,9 +127,38 @@ AddEventHandler('playerJoining', function()
     noter({ type = 'arrivee', joueur = info })
 end)
 
-AddEventHandler('esx:playerLoaded', function(playerId)
+AddEventHandler('esx:playerLoaded', function(playerId, _, nouveau)
     -- Le métier n'est connu qu'une fois le personnage chargé.
-    infoJoueur(playerId)
+    noter({ type = 'personnage', joueur = infoJoueur(playerId), nouveau = nouveau == true })
+end)
+
+AddEventHandler('esx:setJob', function(src, job, ancien)
+    -- Une prise ou fin de service rappelle setJob avec le même métier et le
+    -- même grade : les scripts de métier la journalisent déjà, on l'ignore.
+    if type(job) ~= 'table' then return end
+    if type(ancien) == 'table' and ancien.name == job.name and ancien.grade == job.grade then return end
+    noter({
+        type = 'metier', joueur = infoJoueur(src),
+        avant = type(ancien) == 'table' and ((ancien.label or ancien.name) .. ' — ' .. (ancien.grade_label or '?')) or nil,
+        apres = (job.label or job.name) .. ' — ' .. (job.grade_label or '?'),
+    })
+end)
+
+-- ⚠️ Envoyé par le CLIENT (es_extended/client/modules/death.lua) : on le
+-- journalise sans s'y fier pour autre chose, et un client qui le répète en
+-- boucle n'inonde pas le salon.
+local derniereMort = {}
+RegisterNetEvent('esx:onPlayerDeath')
+AddEventHandler('esx:onPlayerDeath', function(data)
+    local src = tonumber(source)
+    if not src or (derniereMort[src] and os.time() - derniereMort[src] < 10) then return end
+    derniereMort[src] = os.time()
+    data = type(data) == 'table' and data or {}
+    local evt = { type = 'mort', joueur = infoJoueur(src) }
+    local tueur = data.killedByPlayer and tonumber(data.killerServerId)
+    if tueur and tueur ~= src and GetPlayerName(tueur) then evt.tueur = infoJoueur(tueur) end
+    evt.cause = CAUSES[tonumber(data.deathCause) or 0] or (data.deathCause and 'autre cause' or nil)
+    noter(evt)
 end)
 
 AddEventHandler('playerDropped', function(raison)
@@ -113,6 +169,7 @@ AddEventHandler('playerDropped', function(raison)
     noter({ type = 'depart', joueur = info, raison = raison })
     connus[src] = nil
     arrivees[src] = nil
+    derniereMort[src] = nil
 end)
 
 local function etat(depuis)
@@ -138,6 +195,13 @@ local function etat(depuis)
         -- Les scripts qui ont déclaré des journaux (journaux.lua).
         modules = VesperJournauxEtat and VesperJournauxEtat() or {},
     }
+end
+
+local function parametre(chemin, nom)
+    local v = chemin:match('[?&]' .. nom .. '=([^&]*)')
+    if not v then return '' end
+    v = v:gsub('+', ' ')
+    return (v:gsub('%%(%x%x)', function(h) return string.char(tonumber(h, 16)) end))
 end
 
 local function entete(req, nom)
@@ -166,6 +230,25 @@ SetHttpHandler(function(req, res)
         local ok, corps = pcall(etat, depuis)
         if not ok then return repondre(500, { erreur = tostring(corps) }) end
         return repondre(200, corps)
+    end
+
+    -- Fiche joueur (/id) et autocomplétion : requêtes SQL, donc dans un
+    -- fil à part (MySQL.query.await exige une coroutine).
+    if req.method == 'GET' and (chemin == '/fiche' or chemin == '/recherche') then
+        local q = parametre(req.path or '', 'q')
+        CreateThread(function()
+            local ok, corps, raison
+            if chemin == '/fiche' then
+                ok, corps, raison = pcall(VesperFiche, q)
+            else
+                ok, corps = pcall(VesperRecherche, q, 25)
+                corps = { resultats = corps }
+            end
+            if not ok then return repondre(500, { erreur = tostring(corps) }) end
+            if corps == nil then return repondre(404, { erreur = raison or 'introuvable' }) end
+            repondre(200, corps)
+        end)
+        return
     end
 
     if req.method == 'POST' and chemin == '/annonce' then

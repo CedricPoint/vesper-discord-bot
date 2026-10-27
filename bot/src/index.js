@@ -121,6 +121,22 @@ function duree(secondes) {
   return `${s} s`;
 }
 
+function argent(n) {
+  return n == null ? '?' : `${Math.round(Number(n)).toLocaleString('fr-FR')} $`;
+}
+
+// oxmysql rend les dates en millisecondes, nos tables en secondes, et
+// certaines colonnes en texte : tout devient un horodatage Discord.
+function quand(v, style = 'f') {
+  if (v == null || v === '') return null;
+  let s = typeof v === 'number' ? v : (/^\d+$/.test(String(v)) ? Number(v) : Date.parse(String(v)) / 1000);
+  if (!Number.isFinite(s)) return String(v);
+  if (s > 1e11) s /= 1000;
+  return ts(s, style);
+}
+
+const liste = (x) => (Array.isArray(x) ? x : Object.values(x || {}));
+
 function barre(n, max, cases = 8) {
   const plein = max ? Math.round((n / max) * cases) : 0;
   return '▰'.repeat(Math.min(cases, plein)) + '▱'.repeat(Math.max(0, cases - plein));
@@ -224,9 +240,15 @@ async function assurerRole(cle, options) {
 // range ailleurs ou change son nom, c'est voulu. Ses permissions ne sont
 // réécrites que si la configuration des rôles (.env) a changé depuis la
 // dernière installation — pas à chaque démarrage.
-async function assurerSalon(cle, options, reappliquer) {
+async function assurerSalon(cle, options, reappliquer, ancienNom) {
   const existant = etat.salons[cle] && (await guilde.channels.fetch(etat.salons[cle]).catch(() => null));
   if (existant) {
+    // Un salon que le bot a lui-même renommé d'une version à l'autre : on
+    // ne touche qu'au nom d'origine, jamais à un nom choisi par le staff.
+    if (ancienNom && existant.name === ancienNom) {
+      await existant.edit({ name: options.name, topic: options.topic, reason: 'Bot VESPER : salon renommé' })
+        .catch((e) => console.error('renommage', cle, e.message));
+    }
     if (reappliquer && options.permissionOverwrites) {
       await existant.permissionOverwrites.set(options.permissionOverwrites, 'Bot VESPER : rôles reconfigurés')
         .catch((e) => console.error('permissions', cle, e.message));
@@ -327,9 +349,10 @@ async function installer() {
     name: '🛡️ VESPER — STAFF', type: ChannelType.GuildCategory, permissionOverwrites: prive,
   }, reappliquer);
   await assurerSalon('connexions', {
-    name: '📜・connexions-jeu', type: ChannelType.GuildText, parent: staff.id,
-    topic: 'Arrivées et départs des joueurs en jeu.', permissionOverwrites: prive,
-  }, reappliquer);
+    name: '📋・logs-joueurs', type: ChannelType.GuildText, parent: staff.id,
+    topic: 'Connexions, déconnexions, personnages chargés, changements de métier, morts, redémarrages. Fiche d’un joueur : /id.',
+    permissionOverwrites: prive,
+  }, reappliquer, '📜・connexions-jeu');
   await assurerSalon('journal', {
     name: '🤖・journal-bot', type: ChannelType.GuildText, parent: staff.id,
     topic: 'Démarrages du bot, redémarrages du serveur, ressources lancées ou arrêtées.', permissionOverwrites: prive,
@@ -647,26 +670,68 @@ async function majRoleEnJeu() {
 
 // ── Journaux : connexions et ressources ──────────────────────────────────
 
+function qui(j) {
+  return `**${echapper(j.nom || '?')}** \`#${j.id ?? '?'}\`${j.discord ? ` · <@${j.discord}>` : ''}`;
+}
+
+function metierDe(j) {
+  return j.metier_label ? `${echapper(j.metier_label)}${j.grade ? ` (${echapper(j.grade)})` : ''}` : null;
+}
+
+// Un événement de la ressource → un embed du salon 📋 logs-joueurs.
+function embedEvenement(evt) {
+  const j = evt.joueur || {};
+  const e = new EmbedBuilder().setTimestamp(new Date((evt.t || maintenant()) * 1000));
+  const lignes = (l) => l.filter(Boolean).join('\n');
+  const licence = j.licence ? `Licence : \`${j.licence}\`` : null;
+
+  if (evt.type === 'arrivee') {
+    return e.setColor(COULEUR.ok).setDescription(lignes([`➡️ ${qui(j)} se connecte`, licence]));
+  }
+  if (evt.type === 'personnage') {
+    return e.setColor(COULEUR.info).setDescription(lignes([
+      `🧍 ${qui(j)} ${evt.nouveau ? '**crée un nouveau personnage**' : 'charge son personnage'}`,
+      j.personnage && `Personnage : **${echapper(j.personnage)}**`,
+      metierDe(j) && `Métier : ${metierDe(j)}`,
+      (j.liquide != null || j.banque != null) && `Argent : 💵 ${argent(j.liquide)} · 🏦 ${argent(j.banque)}`,
+    ]));
+  }
+  if (evt.type === 'metier') {
+    return e.setColor(COULEUR.marque).setDescription(lignes([
+      `💼 ${qui(j)} change de métier${j.personnage ? ` — ${echapper(j.personnage)}` : ''}`,
+      `${evt.avant ? echapper(evt.avant, 80) : '?'} → **${echapper(evt.apres, 80)}**`,
+    ]));
+  }
+  if (evt.type === 'mort') {
+    return e.setColor(0x6b7280).setDescription(lignes([
+      `💀 ${qui(j)}${j.personnage ? ` (${echapper(j.personnage)})` : ''} est mort`,
+      evt.tueur && `Tué par : ${qui(evt.tueur)}${evt.tueur.personnage ? ` (${echapper(evt.tueur.personnage)})` : ''}`,
+      evt.cause && `Cause : ${echapper(evt.cause)}`,
+    ]));
+  }
+  if (evt.type === 'redemarrage') {
+    return e.setColor(COULEUR.maintenance).setDescription(lignes([
+      `🔄 **${evt.joueurs.length} joueur(s) déconnecté(s) par ${evt.panne ? 'la panne' : 'le redémarrage'} du serveur**`,
+      ...evt.joueurs.slice(0, 40).map((x) => `• ${qui(x)}${x.personnage ? ` — ${echapper(x.personnage)}` : ''}`),
+    ]).slice(0, 4000));
+  }
+  return e.setColor(COULEUR.ko).setDescription(lignes([
+    `⬅️ ${qui(j)} se déconnecte`,
+    j.personnage && `Personnage : ${echapper(j.personnage)}`,
+    metierDe(j) && `Métier : ${metierDe(j)}`,
+    j.duree != null && `Session : ${duree(j.duree)}`,
+    (j.liquide != null || j.banque != null) && `Argent : 💵 ${argent(j.liquide)} · 🏦 ${argent(j.banque)}`,
+    evt.raison && `Raison : ${String(evt.raison).slice(0, 200)}`,
+    licence,
+  ]));
+}
+
 async function publierEvenements(evenements) {
   const s = salon('connexions');
   if (!s || !evenements.length) return;
   for (let i = 0; i < evenements.length; i += 10) {
-    const lot = evenements.slice(i, i + 10).map((evt) => {
-      const j = evt.joueur || {};
-      const qui = `**${echapper(j.nom || '?')}** \`#${j.id ?? '?'}\`${j.discord ? ` · <@${j.discord}>` : ''}`;
-      const e = new EmbedBuilder().setTimestamp(new Date((evt.t || maintenant()) * 1000));
-      if (evt.type === 'arrivee') {
-        return e.setColor(COULEUR.ok).setDescription(`➡️ ${qui} se connecte`);
-      }
-      const details = [
-        j.personnage && `Personnage : ${echapper(j.personnage)}`,
-        j.metier_label && `Métier : ${echapper(j.metier_label)}${j.grade ? ` (${echapper(j.grade)})` : ''}`,
-        j.duree != null && `Session : ${duree(j.duree)}`,
-        evt.raison && `Raison : ${String(evt.raison).slice(0, 200)}`,
-      ].filter(Boolean).join('\n');
-      return e.setColor(COULEUR.ko).setDescription(`⬅️ ${qui} se déconnecte${details ? `\n${details}` : ''}`);
-    });
-    await s.send({ embeds: lot, allowedMentions: { parse: [] } }).catch((e) => console.error('connexions', e.message));
+    const lot = evenements.slice(i, i + 10).map(embedEvenement);
+    await s.send({ embeds: lot, allowedMentions: { parse: [] } }).catch((e) => console.error('logs-joueurs', e.message));
   }
 }
 
@@ -722,6 +787,15 @@ async function cycle() {
         etat.dernierEvt = r.dernier;
       }
       await comparerRessources(r.ressources);
+
+      // Les départs provoqués par un arrêt du serveur ne nous parviennent
+      // jamais (la ressource s'éteint avec lui) : on les reconstitue à
+      // partir des derniers joueurs vus.
+      if ((redemarre || etaitHorsLigne) && etat.derniersJoueurs?.length) {
+        await publierEvenements([{ type: 'redemarrage', panne: etaitHorsLigne, joueurs: etat.derniersJoueurs, t: maintenant() }]);
+      }
+      if (r.complet) etat.derniersJoueurs = r.joueurs.map(({ id, nom, discord, personnage }) => ({ id, nom, discord, personnage }));
+
       dernier = r;
       sauver();
       await synchroniserModules(r.modules);
@@ -778,6 +852,11 @@ const COMMANDES = [
     .addSubcommand((s) => s.setName('terminer').setDescription('Fin de la maintenance')),
   new SlashCommandBuilder().setName('installer').setDescription('Recrée les salons et rôles du bot s’il en manque')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName('id').setDescription('Fiche d’un joueur : personnages, argent, inventaire, véhicules, propriétés…')
+    .setDefaultMemberPermissions(STAFF)
+    .addStringOption((o) => o.setName('joueur')
+      .setDescription('Licence, id en jeu, nom du personnage, pseudo FiveM ou compte Discord')
+      .setRequired(true).setAutocomplete(true).setMaxLength(100)),
   new SlashCommandBuilder().setName('journaux').setDescription('Scripts reliés au bot et leurs salons de journaux')
     .setDefaultMemberPermissions(STAFF)
     .addBooleanOption((o) => o.setName('resynchroniser')
@@ -812,6 +891,132 @@ function embedJoueurs(details) {
   return e.setDescription(lignes.join('\n').slice(0, 4000));
 }
 
+// ── Fiche joueur (/id) ───────────────────────────────────────────────────
+
+// Une valeur de champ tient en 1024 caractères : on coupe proprement en
+// annonçant ce qui manque, au lieu de laisser Discord refuser l'embed.
+function champ(lignes, vide = '—') {
+  const l = lignes.filter(Boolean);
+  if (!l.length) return vide;
+  let sortie = '';
+  for (let i = 0; i < l.length; i += 1) {
+    const suite = (sortie ? '\n' : '') + l[i];
+    if ((sortie + suite).length > 990) return `${sortie}\n… et ${l.length - i} de plus`;
+    sortie += suite;
+  }
+  return sortie;
+}
+
+function tailleEmbed(e) {
+  const d = e.toJSON();
+  return (d.title || '').length + (d.description || '').length + (d.footer?.text || '').length
+    + (d.author?.name || '').length + (d.fields || []).reduce((n, f) => n + f.name.length + f.value.length, 0);
+}
+
+function embedCompte(f) {
+  const e = new EmbedBuilder().setColor(f.en_ligne ? COULEUR.ok : 0x6b7280)
+    .setTitle(`🪪 ${echapper(f.pseudo || 'Joueur')}`)
+    .setDescription(f.en_ligne
+      ? `🟢 **En jeu** — id \`#${f.en_ligne.id}\` · ${f.en_ligne.ping} ms`
+      : `⚫ Hors ligne${f.derniere_vue ? ` — vu ${quand(f.derniere_vue, 'R')}` : ''}`)
+    .addFields(
+      { name: 'Licence', value: `\`${f.licence}\`` },
+      { name: 'Discord', value: f.discord ? `<@${f.discord}>` : 'inconnu (seulement quand il est en jeu)', inline: true },
+      { name: 'Temps de jeu', value: f.temps_de_jeu != null ? duree(f.temps_de_jeu) : '—', inline: true },
+      { name: 'Personnages', value: `${liste(f.personnages).length}${f.emplacements ? ` / ${f.emplacements} emplacements` : ''}`, inline: true },
+    );
+  if (f.premiere_vue) e.addFields({ name: 'Première connexion relevée', value: quand(f.premiere_vue), inline: true });
+  if (f.staff) e.addFields({ name: 'Staff', value: echapper(f.staff), inline: true });
+  const sanctions = liste(f.sanctions);
+  e.addFields({
+    name: `⛔ Sanctions (${sanctions.length})`,
+    value: champ(sanctions.map((s) => `${s.levee ? '~~' : ''}${echapper(s.raison || 'sans motif', 120)} — par ${echapper(s.par || '?')}`
+      + ` ${quand(s.le, 'd') || ''}${s.jusqu_a ? ` → ${quand(s.jusqu_a, 'd')}` : ' (définitif)'}${s.levee ? '~~ levée' : ''}`), 'Aucune'),
+  });
+  return e;
+}
+
+const SEXES = { m: 'Homme', f: 'Femme' };
+
+function embedPersonnage(p, enLigne) {
+  const nom = `${p.prenom || '?'} ${p.nom || ''}`.trim();
+  const e = new EmbedBuilder().setColor(p.en_jeu ? COULEUR.ok : COULEUR.marque)
+    .setTitle(`👤 ${echapper(nom)}${p.en_jeu ? ' · 🟢 en jeu' : ''}`)
+    .setFooter({ text: `${p.identifiant}${p.en_jeu ? ' · argent et inventaire en direct' : ' · d’après la dernière sauvegarde'}` });
+
+  e.addFields(
+    { name: '🪪 Identité', inline: true, value: champ([
+      p.naissance && `Né(e) le ${echapper(p.naissance)}`,
+      p.sexe && (SEXES[p.sexe] || echapper(p.sexe)),
+      p.taille && `${p.taille} cm`,
+      p.groupe_sanguin && `Groupe ${echapper(p.groupe_sanguin)}`,
+      p.telephone && `📞 ${echapper(p.telephone)}`,
+      p.cree_le && `Créé ${quand(p.cree_le, 'd')}`,
+    ]) },
+    { name: '💼 Métier', inline: true, value: champ([
+      `${echapper(p.metier || '?')}${p.grade ? ` — ${echapper(p.grade)}` : ''}`,
+      p.matricule && `Matricule ${echapper(p.matricule)}`,
+      p.groupe && p.groupe !== 'user' && `Groupe ESX : ${echapper(p.groupe)}`,
+      p.gang && `🏴 ${echapper(p.gang.nom)} (${echapper(p.gang.grade)})`,
+    ]) },
+    { name: '💰 Argent', inline: true, value: champ([
+      `💵 ${argent(p.argent?.liquide)}`,
+      `🏦 ${argent(p.argent?.banque)}`,
+      p.argent?.sale ? `🕶️ ${argent(p.argent.sale)} (sale)` : null,
+      ...liste(p.cartes).map((c) => `💳 ${echapper(c.type || 'carte')} ••${c.fin}${c.active ? '' : ' (bloquée)'}`),
+      p.casino && `🎰 ${p.casino.jetons} jetons${p.casino.vip ? ' · VIP' : ''}`,
+    ]) },
+  );
+
+  const justice = [
+    p.casier && `Casier : **${p.casier.total}** entrée(s)`,
+    ...liste(p.casier?.derniers).map((c) => `• ${echapper(c.infractions || '?', 120)} — ${argent(c.amende)}${c.prison ? `, ${c.prison} min` : ''} ${quand(c.quand, 'd') || ''}`),
+    p.amendes_impayees?.nombre && `Amendes impayées : **${p.amendes_impayees.nombre}** (${argent(p.amendes_impayees.total)})`,
+    p.factures_ouvertes?.nombre && `Factures ouvertes : **${p.factures_ouvertes.nombre}** (${argent(p.factures_ouvertes.reste)} restants)`,
+    ...liste(p.assurances).map((a) => `🩺 ${echapper(a.nom)}${a.jusqu_a ? ` jusqu’au ${quand(a.jusqu_a, 'd')}` : ''}`),
+  ];
+  e.addFields({ name: '⚖️ Justice, factures, assurances', value: champ(justice, 'Rien à signaler') });
+
+  const vehicules = liste(p.vehicules);
+  e.addFields({
+    name: `🚗 Véhicules (${vehicules.length})`,
+    value: champ(vehicules.map((v) => `\`${echapper(v.plaque)}\` ${echapper(v.modele, 50)} — ${v.etat}${v.garage && v.etat !== 'sorti' ? ` (${echapper(v.garage, 40)})` : ''}`), 'Aucun'),
+  });
+  const proprietes = liste(p.proprietes);
+  e.addFields({
+    name: `🏠 Propriétés (${proprietes.length})`,
+    value: champ(proprietes.map((h) => `${echapper(h.nom, 80)} — ${h.type}${h.dette ? ` (dette ${argent(h.dette)})` : ''}`), 'Aucune'),
+  });
+
+  const inventaire = liste(p.inventaire);
+  e.addFields({
+    name: `🎒 Inventaire (${inventaire.length} objet${inventaire.length > 1 ? 's' : ''} différents)`,
+    value: champ(inventaire.map((o) => `${Number(o.quantite).toLocaleString('fr-FR')}× ${echapper(o.label || o.objet, 60)}`), 'Vide'),
+  });
+  return e;
+}
+
+// Rend des lots d'embeds, un par message : 10 embeds et 6000 caractères au
+// plus par message.
+function embedsFiche(f) {
+  const embeds = [embedCompte(f), ...liste(f.personnages).map((p) => embedPersonnage(p, f.en_ligne))];
+  const lots = [];
+  let lot = [];
+  let taille = 0;
+  for (const e of embeds) {
+    const t = tailleEmbed(e);
+    if (lot.length && (lot.length >= 10 || taille + t > 5800)) {
+      lots.push(lot);
+      lot = [];
+      taille = 0;
+    }
+    lot.push(e);
+    taille += t;
+  }
+  if (lot.length) lots.push(lot);
+  return lots;
+}
+
 function embedConnexion() {
   const lien = lienConnexion();
   return new EmbedBuilder().setColor(COULEUR.marque).setTitle('🎮 Rejoindre VESPER RP')
@@ -827,6 +1032,17 @@ async function surInteraction(interaction) {
 
   // Seuls les scripts absents sont proposés : on ne retire pas les
   // journaux d'un script qui tourne (il les recréerait au relevé suivant).
+  if (interaction.isAutocomplete() && interaction.commandName === 'id') {
+    if (!estStaff(interaction)) return interaction.respond([]).catch(() => {});
+    const tape = interaction.options.getFocused();
+    try {
+      const r = await recuperer(`/vesper-discord/recherche?q=${encodeURIComponent(tape)}`);
+      return interaction.respond(liste(r.resultats).map((x) => ({ name: x.label, value: x.valeur }))).catch(() => {});
+    } catch {
+      return interaction.respond([]).catch(() => {});
+    }
+  }
+
   if (interaction.isAutocomplete()) {
     if (interaction.commandName !== 'journaux' || !estStaff(interaction)) return interaction.respond([]);
     const tape = interaction.options.getFocused().toLowerCase();
@@ -919,6 +1135,32 @@ async function surInteraction(interaction) {
         champ('image', 'Image (lien, facultatif)', TextInputStyle.Short, false, 500, 'https://…'),
       );
     return interaction.showModal(modal);
+  }
+
+  if (cmd === 'id') {
+    const recherche = interaction.options.getString('joueur', true);
+    await interaction.deferReply({ ephemeral: true });
+    let fiche;
+    try {
+      fiche = await recuperer(`/vesper-discord/fiche?q=${encodeURIComponent(recherche)}`);
+    } catch (err) {
+      const msg = err.status === 404 ? 'Aucun joueur trouvé.' : `Le serveur n’a pas répondu (${err.message}).`;
+      return interaction.editReply(`❌ ${msg}`);
+    }
+    if (fiche.candidats) {
+      const c = liste(fiche.candidats);
+      return interaction.editReply(c.length
+        ? `Plusieurs joueurs correspondent, précisez :\n${c.map((x) => `• ${x.label} — \`${x.valeur}\``).join('\n')}`.slice(0, 1900)
+        : '❌ Aucun joueur trouvé.');
+    }
+    const [premier, ...suite] = embedsFiche(fiche);
+    await interaction.editReply({ embeds: premier, allowedMentions: { parse: [] } });
+    for (const lot of suite) {
+      await interaction.followUp({ embeds: lot, ephemeral: true, allowedMentions: { parse: [] } });
+    }
+    // Qui a consulté quoi : la fiche montre l'argent et l'inventaire.
+    await journal(`🔎 <@${interaction.user.id}> a consulté la fiche de **${echapper(fiche.pseudo || fiche.licence)}** (\`${fiche.licence}\`).`);
+    return;
   }
 
   if (cmd === 'annonce-jeu') {
@@ -1100,10 +1342,16 @@ function demarrer(avecMembres) {
   });
 }
 
-process.on('unhandledRejection', (e) => console.error('promesse rejetée', e));
-process.on('SIGTERM', () => { client?.destroy(); process.exit(0); });
+// Importé (tests de mise en forme) : on expose les constructeurs d'embeds
+// sans se connecter à Discord.
+if (require.main === module) {
+  process.on('unhandledRejection', (e) => console.error('promesse rejetée', e));
+  process.on('SIGTERM', () => { client?.destroy(); process.exit(0); });
 
-demarrer(CFG.bienvenue).catch((e) => {
-  console.error('connexion impossible', e.message);
-  process.exit(1);
-});
+  demarrer(CFG.bienvenue).catch((e) => {
+    console.error('connexion impossible', e.message);
+    process.exit(1);
+  });
+} else {
+  module.exports = { embedsFiche, embedEvenement };
+}

@@ -1,5 +1,7 @@
 # Bot Discord VESPER
 
+📘 **Documentation complète : [`docs/DOCUMENTATION.md`](docs/DOCUMENTATION.md)**
+
 Deux pièces qui travaillent ensemble :
 
 | Dossier | Quoi | Où ça tourne |
@@ -12,9 +14,11 @@ Deux pièces qui travaillent ensemble :
 - **Statut en direct** : panneau dans `📊・statut-serveur` (joueurs, services
   en ligne, pic du jour, record), compteurs en salons vocaux, présence du bot,
   annonces de panne, de retour et de redémarrage, rôle « 🎮 En jeu ».
-- **Staff** : connexions et départs des joueurs, ressources lancées ou
+- **Staff** : salon `📋・logs-joueurs` (connexions, départs, personnages,
+  métiers, morts, redémarrages), fiche complète d'un joueur avec `/id`
+  (argent, inventaire, véhicules, propriétés, casier…), ressources lancées ou
   arrêtées, journal du bot.
-- **Commandes** : `/statut`, `/joueurs`, `/connexion`, `/update` (mise à jour
+- **Commandes** : `/statut`, `/joueurs`, `/connexion`, `/id`, `/update` (mise à jour
   dans `📢・mises-à-jour`), `/annonce-jeu`, `/maintenance`, `/installer`,
   `/journaux`.
 - **Journaux des scripts** : un script compatible (`vesper-lspd`, `vesper-ems`) se
