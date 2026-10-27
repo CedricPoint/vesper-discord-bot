@@ -1,6 +1,6 @@
 {
   "name": "vesper-discord-bot",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Bot Discord de VESPER RP : statut du serveur FiveM, joueurs, mises à jour, journaux staff.",
   "main": "src/index.js",
   "private": true,

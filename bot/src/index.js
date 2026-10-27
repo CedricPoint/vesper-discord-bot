@@ -425,6 +425,30 @@ async function synchroniserModules(modules) {
   }
 }
 
+// Un script désinstallé laisse sa catégorie : on ne la supprime jamais
+// tout seul (un arrêt pour maintenance ne doit pas effacer l'historique),
+// mais le staff peut la retirer avec `/journaux retirer`.
+async function retirerModule(id) {
+  const m = etat.modules[id];
+  const cles = Object.keys(etat.salons).filter((c) => c.startsWith(`mod:${id}:`));
+  // Les salons d'abord, la catégorie en dernier : Discord refuse sinon
+  // de la vider proprement.
+  cles.sort((a, b) => (a.endsWith(':categorie') ? 1 : 0) - (b.endsWith(':categorie') ? 1 : 0));
+  let supprimes = 0;
+  for (const c of cles) {
+    const ch = await guilde.channels.fetch(etat.salons[c]).catch(() => null);
+    if (ch) {
+      await ch.delete(`Bot VESPER : journaux de ${m?.titre || id} retirés`);
+      supprimes += 1;
+    }
+    delete etat.salons[c];
+  }
+  delete etat.modules[id];
+  echecsModules.delete(id);
+  sauver();
+  return { titre: m?.titre || id, supprimes };
+}
+
 // ── Panneau de statut ────────────────────────────────────────────────────
 
 function compterServices(joueurs) {
@@ -757,7 +781,10 @@ const COMMANDES = [
   new SlashCommandBuilder().setName('journaux').setDescription('Scripts reliés au bot et leurs salons de journaux')
     .setDefaultMemberPermissions(STAFF)
     .addBooleanOption((o) => o.setName('resynchroniser')
-      .setDescription('Vérifier et recréer salons et webhooks manquants au prochain relevé')),
+      .setDescription('Vérifier et recréer salons et webhooks manquants au prochain relevé'))
+    .addStringOption((o) => o.setName('retirer')
+      .setDescription('Supprimer la catégorie et les salons d’un script arrêté ou désinstallé')
+      .setAutocomplete(true)),
 ].map((c) => c.setDMPermission(false).toJSON());
 
 async function enregistrerCommandes() {
@@ -797,6 +824,20 @@ function embedConnexion() {
 
 async function surInteraction(interaction) {
   if (interaction.guildId !== CFG.guildId) return;
+
+  // Seuls les scripts absents sont proposés : on ne retire pas les
+  // journaux d'un script qui tourne (il les recréerait au relevé suivant).
+  if (interaction.isAutocomplete()) {
+    if (interaction.commandName !== 'journaux' || !estStaff(interaction)) return interaction.respond([]);
+    const tape = interaction.options.getFocused().toLowerCase();
+    const presents = new Set(modulesPresents.map((m) => m.id));
+    const choix = Object.entries(etat.modules)
+      .filter(([id]) => !presents.has(id))
+      .map(([id, m]) => ({ name: `${m.titre || id} (${id})`.slice(0, 100), value: id }))
+      .filter((c) => c.name.toLowerCase().includes(tape))
+      .slice(0, 25);
+    return interaction.respond(choix).catch(() => {});
+  }
 
   if (interaction.isButton()) {
     if (interaction.customId === 'vesper:joueurs') {
@@ -912,6 +953,28 @@ async function surInteraction(interaction) {
   }
 
   if (cmd === 'journaux') {
+    const aRetirer = interaction.options.getString('retirer');
+    if (aRetirer) {
+      if (!etat.modules[aRetirer]) {
+        return interaction.reply({ content: `Aucun journal connu pour \`${echapper(aRetirer, 60)}\`.`, ephemeral: true });
+      }
+      if (modulesPresents.some((m) => m.id === aRetirer)) {
+        return interaction.reply({
+          content: `\`${aRetirer}\` tourne encore : arrêtez la ressource d’abord, sinon ses salons reviennent au relevé suivant.`,
+          ephemeral: true,
+        });
+      }
+      await interaction.deferReply({ ephemeral: true });
+      try {
+        const r = await retirerModule(aRetirer);
+        await journal(`🗑️ Journaux de **${echapper(r.titre)}** (\`${aRetirer}\`) retirés par <@${interaction.user.id}> `
+          + `(${r.supprimes} salon(s) supprimé(s)).`);
+        return interaction.editReply(`✅ Journaux de **${echapper(r.titre)}** retirés : ${r.supprimes} salon(s) supprimé(s). `
+          + 'S’il redémarre un jour, le script les recréera tout seul.');
+      } catch (err) {
+        return interaction.editReply(`❌ Retrait incomplet (${err.message}). Relancez la commande pour finir.`);
+      }
+    }
     if (interaction.options.getBoolean('resynchroniser')) {
       for (const id of Object.keys(etat.modules)) etat.modules[id].signature = null;
       echecsModules.clear();
@@ -928,7 +991,7 @@ async function surInteraction(interaction) {
       const m = etat.modules[id];
       const enCours = modulesPresents.find((x) => x.id === id);
       const manquants = enCours?.manquants?.length || 0;
-      const etatTexte = !presents.has(id) ? '⚪ script arrêté (salons conservés)'
+      const etatTexte = !presents.has(id) ? '⚪ script arrêté (salons conservés · `/journaux retirer` pour les supprimer)'
         : !m ? '⏳ installation au prochain relevé'
           : manquants ? `🟠 ${manquants} webhook(s) à refaire` : '🟢 relié';
       const salons = m ? Object.values(m.salons).map((s) => `<#${s.salon}>`).join(' ') : '—';

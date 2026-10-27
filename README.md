@@ -17,9 +17,11 @@ Deux pièces qui travaillent ensemble :
 - **Commandes** : `/statut`, `/joueurs`, `/connexion`, `/update` (mise à jour
   dans `📢・mises-à-jour`), `/annonce-jeu`, `/maintenance`, `/installer`,
   `/journaux`.
-- **Journaux des scripts** : un script compatible (ex. `vesper-lspd`) se
+- **Journaux des scripts** : un script compatible (`vesper-lspd`, `vesper-ems`) se
   déclare à la ressource ; le bot crée **tout seul** sa catégorie
   « LOGS — … » réservée au staff, un salon par sujet et leurs webhooks.
+  Un serveur ne reçoit que les journaux des scripts qu'il fait tourner ;
+  `/journaux retirer` nettoie ceux d'un script désinstallé.
   Voir [`docs/journaux.md`](docs/journaux.md).
 
 ## Installation

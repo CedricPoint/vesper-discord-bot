@@ -62,6 +62,21 @@ les limites de Discord (429 → attente demandée).
    webhook, le bot recrée salon et webhook au relevé suivant.
 5. `/journaux` sur Discord : état de chaque script ; option
    `resynchroniser` pour tout revérifier.
+6. **Un serveur ne voit que les scripts qu'il fait tourner.** Seules les
+   ressources démarrées figurent dans `/etat` : un serveur qui n'a que
+   `vesper-lspd` n'aura que la catégorie LSPD, et `vesper-ems` ajoutera la
+   sienne le jour où il démarre.
+7. Un script arrêté garde ses salons (une maintenance n'efface pas
+   l'historique). Désinstallé pour de bon : `/journaux retirer:<script>`
+   supprime sa catégorie et ses salons. Seuls les scripts absents sont
+   proposés ; s'il redémarre un jour, tout est recréé.
+
+## Scripts compatibles
+
+| Script | Catégorie | Salons |
+|---|---|---|
+| `vesper-lspd` | 🚔 LOGS — LSPD | service, procedures, interpellations, armurerie, dispatch, radars-cameras, commandement, admin |
+| `vesper-ems` | 🚑 LOGS — EMS | service, patients, soins, transport, dispatch, radio, finances, logistique, direction, admin |
 
 ## Pièges rencontrés
 
