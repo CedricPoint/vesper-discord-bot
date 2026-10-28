@@ -1,4 +1,4 @@
-// Bot Discord de VESPER RP.
+// Bot Discord VESPER : statut d'un serveur FiveM, joueurs, logs et mises à jour.
 //
 // Il crée et tient seul ses salons : panneau de statut en direct, compteurs
 // de joueurs et de membres, mises à jour, journaux du staff. Il interroge
@@ -24,6 +24,7 @@ const {
 } = require('discord.js');
 
 const VERSION = require('../package.json').version;
+const maj = require('./maj');
 
 // ── Configuration ────────────────────────────────────────────────────────
 
@@ -38,19 +39,54 @@ const VERSION = require('../package.json').version;
   }
 })();
 
+const liste_ = (v) => (v || '').split(',').map((s) => s.trim()).filter(Boolean);
+
+// Métiers mis en avant sur le panneau, dans cet ordre (réglables : /config services).
+const SERVICES_DEFAUT = [
+  { metier: 'police', emoji: '👮', nom: 'Police' },
+  { metier: 'ambulance', emoji: '🚑', nom: 'Secours' },
+  { metier: 'mechanic', emoji: '🔧', nom: 'Mécanos' },
+  { metier: 'taxi', emoji: '🚕', nom: 'Taxis' },
+  { metier: 'realestate', emoji: '🏠', nom: 'Immobilier' },
+];
+
+// Le .env donne les valeurs de départ ; tout ce qui se règle depuis Discord
+// (/config) est ensuite rangé dans data/config.json et l'emporte.
 const CFG = {
   token: process.env.DISCORD_TOKEN,
-  guildId: process.env.GUILD_ID || '1563713516920250420',
+  // Vide : le bot adopte le premier serveur Discord où on l'invite.
+  guildId: (process.env.GUILD_ID || '').trim() || null,
   fivem: (process.env.FIVEM_URL || 'http://127.0.0.1:30120').replace(/\/$/, ''),
   jeton: process.env.VESPER_JETON || '',
-  adresse: process.env.ADRESSE_CONNEXION || '92.112.194.115:30120',
+  // Vide : le nom annoncé par le serveur FiveM (sv_projectName).
+  nom: (process.env.NOM_SERVEUR || '').trim(),
+  adresse: (process.env.ADRESSE_CONNEXION || '').trim(),
   cfxJoin: (process.env.CFX_JOIN || '').trim(),
-  staffRoles: (process.env.STAFF_ROLE_IDS || '').split(',').map((s) => s.trim()).filter(Boolean),
-  rolesLecture: (process.env.ROLES_LECTURE || '').split(',').map((s) => s.trim()).filter(Boolean),
-  // Désactivé quand un autre bot (Toastie) accueille déjà les arrivants.
+  staffRoles: liste_(process.env.STAFF_ROLE_IDS),
+  rolesLecture: liste_(process.env.ROLES_LECTURE),
+  // À laisser coupé quand un autre bot accueille déjà les arrivants.
   bienvenue: process.env.BIENVENUE === '1',
+  services: SERVICES_DEFAUT,
   intervalle: Math.max(10, Number(process.env.INTERVALLE) || 15) * 1000,
 };
+
+const FICHIER_CONFIG = path.join(__dirname, '..', 'data', 'config.json');
+const REGLABLES = ['guildId', 'nom', 'adresse', 'cfxJoin', 'staffRoles', 'rolesLecture', 'bienvenue', 'services'];
+
+(function chargerConfig() {
+  try {
+    const c = JSON.parse(fs.readFileSync(FICHIER_CONFIG, 'utf8'));
+    for (const k of REGLABLES) if (c[k] !== undefined) CFG[k] = c[k];
+  } catch { /* pas encore de réglages faits depuis Discord */ }
+})();
+
+function sauverConfig() {
+  const c = {};
+  for (const k of REGLABLES) c[k] = CFG[k];
+  fs.mkdirSync(path.dirname(FICHIER_CONFIG), { recursive: true });
+  fs.writeFileSync(`${FICHIER_CONFIG}.tmp`, JSON.stringify(c, null, 2));
+  fs.renameSync(`${FICHIER_CONFIG}.tmp`, FICHIER_CONFIG);
+}
 
 if (!CFG.token) {
   console.error('DISCORD_TOKEN manquant (.env)');
@@ -58,15 +94,6 @@ if (!CFG.token) {
 }
 
 const COULEUR = { marque: 0x7c6cf5, ok: 0x22c55e, ko: 0xef4444, maintenance: 0xf59e0b, info: 0x4da6ff };
-
-// Métiers mis en avant sur le panneau, dans cet ordre.
-const SERVICES = [
-  { metier: 'police', emoji: '👮', nom: 'Police' },
-  { metier: 'ambulance', emoji: '🚑', nom: 'Secours' },
-  { metier: 'mechanic', emoji: '🔧', nom: 'Mécanos' },
-  { metier: 'taxi', emoji: '🚕', nom: 'Taxis' },
-  { metier: 'realestate', emoji: '🏠', nom: 'Immobilier' },
-];
 
 // Trois relevés manqués (≈ 45 s) avant de déclarer le serveur hors ligne :
 // un relevé perdu pendant un pic de charge ne doit pas alerter tout le monde.
@@ -174,7 +201,9 @@ async function releve() {
   try {
     const depuis = etat.dernierEvt ?? 0;
     const d = await recuperer(`/vesper-discord/etat?depuis=${depuis}`);
+    if (d.nom) nomFiveM = d.nom;
     return {
+      nom: d.nom, version: d.version || null,
       enLigne: true, complet: true, max: d.max, joueurs: d.joueurs || [],
       enLigneDepuis: d.en_ligne_depuis, ressources: d.ressources || [],
       evenements: d.evenements || [], dernier: d.dernier ?? 0,
@@ -200,7 +229,16 @@ let dernier = null;          // dernier relevé réussi
 let statut = 'inconnu';      // 'en_ligne' | 'hors_ligne' | 'inconnu'
 let echecs = 0;
 let hashPanneau = null;
+let nomFiveM = null;         // sv_projectName, lu au premier relevé
 const renommages = new Map(); // id salon → horodatage du dernier renommage
+
+function nomServeur() {
+  return CFG.nom || nomFiveM || 'Serveur FiveM';
+}
+
+function lienInvitation() {
+  return `https://discord.com/oauth2/authorize?client_id=${client.user.id}&permissions=8&scope=bot%20applications.commands`;
+}
 
 function estStaff(interaction) {
   if (interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) return true;
@@ -297,7 +335,7 @@ async function installer() {
   });
 
   const publique = await assurerSalon('categorie', {
-    name: '📡 VESPER RP — SERVEUR', type: ChannelType.GuildCategory, position: 0,
+    name: `📡 ${nomServeur()} — SERVEUR`, type: ChannelType.GuildCategory, position: 0,
   });
 
   const vue = [PermissionFlagsBits.ViewChannel];
@@ -326,16 +364,16 @@ async function installer() {
   ];
   await assurerSalon('statut', {
     name: '📊・statut-serveur', type: ChannelType.GuildText, parent: publique.id,
-    topic: 'État du serveur VESPER RP en direct — mis à jour automatiquement.', permissionOverwrites: lectureSeule,
+    topic: `État du serveur ${nomServeur()} en direct — mis à jour automatiquement.`, permissionOverwrites: lectureSeule,
   }, reappliquer);
   await assurerSalon('majs', {
     name: '📢・mises-à-jour', type: ChannelType.GuildText, parent: publique.id,
-    topic: 'Nouveautés et correctifs du serveur VESPER RP.', permissionOverwrites: lectureSeule,
+    topic: `Nouveautés et correctifs du serveur ${nomServeur()}.`, permissionOverwrites: lectureSeule,
   }, reappliquer);
   if (CFG.bienvenue) {
     await assurerSalon('bienvenue', {
       name: '👋・bienvenue', type: ChannelType.GuildText, parent: publique.id,
-      topic: 'Les nouveaux arrivants sur le Discord de VESPER RP.', permissionOverwrites: lectureSeule,
+      topic: `Les nouveaux arrivants sur le Discord de ${nomServeur()}.`, permissionOverwrites: lectureSeule,
     }, reappliquer);
   }
 
@@ -346,7 +384,7 @@ async function installer() {
     ...staffAutorise,
   ];
   const staff = await assurerSalon('categorieStaff', {
-    name: '🛡️ VESPER — STAFF', type: ChannelType.GuildCategory, permissionOverwrites: prive,
+    name: `🛡️ ${nomServeur()} — STAFF`, type: ChannelType.GuildCategory, permissionOverwrites: prive,
   }, reappliquer);
   await assurerSalon('connexions', {
     name: '📋・logs-joueurs', type: ChannelType.GuildText, parent: staff.id,
@@ -356,6 +394,11 @@ async function installer() {
   await assurerSalon('journal', {
     name: '🤖・journal-bot', type: ChannelType.GuildText, parent: staff.id,
     topic: 'Démarrages du bot, redémarrages du serveur, ressources lancées ou arrêtées.', permissionOverwrites: prive,
+  }, reappliquer);
+  await assurerSalon('majBot', {
+    name: '🆕・updates-bot', type: ChannelType.GuildText, parent: staff.id,
+    topic: 'Nouvelles versions du bot. Un administrateur les installe d’un clic sur « Installer ».',
+    permissionOverwrites: prive,
   }, reappliquer);
 
   etat.signatureRoles = signature;
@@ -475,7 +518,7 @@ async function retirerModule(id) {
 // ── Panneau de statut ────────────────────────────────────────────────────
 
 function compterServices(joueurs) {
-  return SERVICES.map((s) => {
+  return liste(CFG.services).map((s) => {
     const membres = joueurs.filter((j) => j.metier === s.metier);
     // `en_service` n'existe que si ESX le gère pour ce métier ; sinon on
     // compte tous ceux qui ont le métier.
@@ -491,12 +534,13 @@ function lienConnexion() {
 
 function embedStatut() {
   const e = new EmbedBuilder()
-    .setAuthor({ name: 'VESPER RP — Roleplay français', iconURL: client.user.displayAvatarURL() })
+    .setAuthor({ name: nomServeur(), iconURL: client.user.displayAvatarURL() })
     .setThumbnail(client.user.displayAvatarURL({ size: 256 }))
     .setFooter({ text: `Bot VESPER v${VERSION} · relevé toutes les ${CFG.intervalle / 1000} s` })
     .setTimestamp(new Date());
 
-  const connexion = `\`\`\`connect ${CFG.adresse}\`\`\``;
+  const connexion = CFG.adresse ? `\`\`\`connect ${CFG.adresse}\`\`\``
+    : (lienConnexion() ? 'Bouton **Se connecter** ci-dessous.' : `Cherchez **${echapper(nomServeur())}** dans la liste des serveurs FiveM.`);
 
   if (statut !== 'en_ligne' || !dernier) {
     return e.setColor(COULEUR.ko)
@@ -651,14 +695,14 @@ async function majRoleEnJeu() {
   for (const id of voulus) {
     if (actuels.has(id)) continue;
     const m = await guilde.members.fetch(id).catch(() => null);
-    if (m) await m.roles.add(roleId, 'En jeu sur VESPER').catch(() => {});
+    if (m) await m.roles.add(roleId, 'Connecté en jeu').catch(() => {});
     actuels.add(id); // même absent du Discord : on ne le recherche pas à chaque relevé
     change = true;
   }
   for (const id of [...actuels]) {
     if (voulus.has(id)) continue;
     const m = await guilde.members.fetch(id).catch(() => null);
-    if (m) await m.roles.remove(roleId, 'A quitté VESPER').catch(() => {});
+    if (m) await m.roles.remove(roleId, 'A quitté le jeu').catch(() => {});
     actuels.delete(id);
     change = true;
   }
@@ -824,6 +868,7 @@ async function cycle() {
     majPresence();
     await majRoleEnJeu();
     await majCompteurs();
+    await verifierMaj();
   } catch (err) {
     console.error('cycle', err);
   } finally {
@@ -831,12 +876,223 @@ async function cycle() {
   }
 }
 
+// ── Mises à jour du bot ──────────────────────────────────────────────────
+
+const VERIFIER_MAJ_TOUTES = 6 * 60 * 60 * 1000;
+let derniereVerification = 0;
+let publicationConnue = null; // dernière version publiée relevée sur GitHub
+let installationEnCours = false;
+
+function embedMaj(p, { lignes = [], couleur = COULEUR.marque, titre } = {}) {
+  const notes = (p.notes || '').trim() || 'Pas de note de version.';
+  return new EmbedBuilder().setColor(couleur)
+    .setTitle(titre || `🆕 Version ${p.version} disponible`)
+    .setURL(p.lien || null)
+    .setDescription([
+      notes.length > 3000 ? `${notes.slice(0, 3000)}\n…` : notes,
+      '',
+      `Version installée : **${VERSION}**${dernier?.version ? ` · ressource FiveM **${dernier.version}**` : ''}`,
+      ...lignes,
+    ].join('\n').slice(0, 4000))
+    .setFooter({ text: 'Sauvegarde automatique avant installation · retour arrière si la nouvelle version plante' })
+    .setTimestamp(p.publiee ? new Date(p.publiee) : new Date());
+}
+
+function boutonsMaj(p, actif = true) {
+  const rangee = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`vesper:maj:${p.version}`).setStyle(ButtonStyle.Success)
+      .setLabel('Installer').setEmoji('⬇️').setDisabled(!actif),
+  );
+  if (p.lien) rangee.addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('Voir sur GitHub').setURL(p.lien));
+  return [rangee];
+}
+
+// Relève la dernière version publiée ; l'annonce une seule fois par version
+// dans 🆕・updates-bot.
+async function verifierMaj({ forcer = false } = {}) {
+  if (!guilde || (!forcer && Date.now() - derniereVerification < VERIFIER_MAJ_TOUTES)) return null;
+  derniereVerification = Date.now();
+  let p;
+  try {
+    p = await maj.derniereVersion();
+  } catch (err) {
+    console.warn('vérification des mises à jour :', err.message);
+    return { erreur: err.message };
+  }
+  publicationConnue = p;
+  if (!p || maj.comparer(p.version, VERSION) <= 0) return { aJour: true, publication: p };
+
+  if (etat.majAnnoncee?.version !== p.version) {
+    const s = salon('majBot');
+    if (s) {
+      // L'annonce d'une version plus ancienne, jamais installée, est close.
+      if (etat.majAnnoncee?.message) {
+        const ancien = await s.messages.fetch(etat.majAnnoncee.message).catch(() => null);
+        if (ancien) await ancien.edit({ components: [] }).catch(() => {});
+      }
+      const msg = await s.send({ embeds: [embedMaj(p)], components: boutonsMaj(p) });
+      etat.majAnnoncee = { version: p.version, message: msg.id };
+      sauver();
+      await journal(`🆕 Version ${p.version} du bot disponible (installée : ${VERSION}) : <#${s.id}>.`);
+    }
+  }
+  return { nouvelle: true, publication: p };
+}
+
+// La ressource FiveM se met à jour elle-même : on lui envoie les fichiers,
+// puis on attend qu'elle revienne avec la nouvelle version.
+async function envoyerRessource(version, fichiers) {
+  await recuperer('/vesper-discord/maj', { method: 'POST', body: JSON.stringify({ version, fichiers }) });
+  const limite = Date.now() + 90 * 1000;
+  while (Date.now() < limite) {
+    await new Promise((r) => setTimeout(r, 3000));
+    try {
+      const d = await recuperer('/vesper-discord/etat?depuis=0');
+      if (d.version === version) return;
+    } catch { /* en plein redémarrage */ }
+  }
+  throw new Error(`la ressource FiveM n’est pas revenue en ${version} (voir la console du serveur ; ses anciens fichiers sont gardés en *.avant-maj-*)`);
+}
+
+async function installerMaj(interaction, version) {
+  if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+    return interaction.reply({ content: 'Seul un administrateur du serveur peut installer une mise à jour.', ephemeral: true });
+  }
+  if (installationEnCours) return interaction.reply({ content: 'Une installation est déjà en cours.', ephemeral: true });
+  installationEnCours = true;
+  await interaction.deferUpdate();
+  const message = interaction.message;
+  const lignes = [`\n⏳ Installation lancée par <@${interaction.user.id}>`];
+  let p = null;
+  const montrer = (couleur = COULEUR.maintenance, titre) => message.edit({
+    embeds: [embedMaj(p || { version, notes: '' }, { lignes, couleur, titre })],
+    components: boutonsMaj(p || { version }, false),
+  }).catch(() => {});
+
+  try {
+    p = await maj.derniereVersion();
+    if (!p || p.version !== version) throw new Error(`la version ${version} n’est plus la dernière publiée${p ? ` (${p.version})` : ''}`);
+    if (maj.comparer(p.version, VERSION) <= 0) throw new Error(`la version ${VERSION} est déjà installée`);
+    await montrer();
+    await journal(`⬇️ <@${interaction.user.id}> installe la version ${version} du bot.`);
+    await maj.installer(p, VERSION, {
+      versionRessource: dernier?.version || null,
+      contexte: { salon: message.channelId, message: message.id, par: interaction.user.id },
+      envoyerRessource,
+      etape: async (texte) => { lignes.push(`• ${texte}`); await montrer(); },
+    });
+    // Le processus se termine : lanceur.js relance la nouvelle version.
+  } catch (err) {
+    installationEnCours = false;
+    lignes.push(`\n❌ **Échec : ${err.message}**`, 'Le bot continue en version actuelle. Vous pouvez réessayer.');
+    await message.edit({
+      embeds: [embedMaj(p || { version, notes: '' }, { lignes, couleur: COULEUR.ko })],
+      components: boutonsMaj(p || { version }, true),
+    }).catch(() => {});
+    await journal(`❌ Échec de la mise à jour ${version} : ${err.message}`);
+  }
+}
+
+// Au démarrage : annoncer l'issue d'une installation lancée avant le redémarrage.
+async function annoncerBilanMaj() {
+  const bilan = maj.bilanAuDemarrage(VERSION);
+  if (!bilan) return;
+  const s = (bilan.salon && guilde.channels.cache.get(bilan.salon)) || salon('majBot');
+  const msg = s && bilan.message ? await s.messages.fetch(bilan.message).catch(() => null) : null;
+  if (bilan.type === 'reussite') {
+    const texte = `✅ **Version ${bilan.vers} installée** (depuis ${bilan.de})${bilan.par ? `, par <@${bilan.par}>` : ''}.`;
+    if (msg) {
+      const e = EmbedBuilder.from(msg.embeds[0]).setColor(COULEUR.ok).setTitle(`✅ Version ${bilan.vers} installée`)
+        .setDescription(`${(msg.embeds[0]?.description || '').split('\n⏳')[0]}\n\n${texte}`.slice(0, 4000));
+      await msg.edit({ embeds: [e], components: [] }).catch(() => {});
+    } else if (s) {
+      await s.send({ content: texte, allowedMentions: { parse: [] } }).catch(() => {});
+    }
+    await journal(texte);
+  } else {
+    const texte = `❌ **La version ${bilan.vers || '?'} plantait au démarrage** : retour automatique à ${bilan.de || 'la version précédente'}`
+      + `${bilan.raison ? ` (${bilan.raison})` : ''}. Rien d’autre à faire ; la console du service en dit plus.`;
+    if (s) await s.send({ content: texte, allowedMentions: { parse: [] } }).catch(() => {});
+    await journal(texte);
+  }
+}
+
+// ── Réglages depuis Discord (/config) ────────────────────────────────────
+
+function lireServices(texte) {
+  // « police=👮 Police, ambulance=🚑 Secours »
+  const services = [];
+  for (const morceau of texte.split(',')) {
+    const m = morceau.trim().match(/^([\w-]+)\s*=\s*(\S+)\s+(.+)$/u);
+    if (!m) throw new Error(`« ${morceau.trim()} » : attendu metier=emoji Nom`);
+    services.push({ metier: m[1], emoji: m[2], nom: m[3].trim().slice(0, 30) });
+  }
+  if (!services.length || services.length > 8) throw new Error('entre 1 et 8 métiers');
+  return services;
+}
+
+function embedConfig() {
+  const roles = (ids) => (ids.length ? ids.map((id) => `<@&${id}>`).join(' ') : '—');
+  return new EmbedBuilder().setColor(COULEUR.marque).setTitle('⚙️ Réglages du bot')
+    .addFields(
+      { name: 'Nom affiché', value: CFG.nom ? echapper(CFG.nom, 80) : `${echapper(nomServeur(), 80)} *(nom du serveur FiveM)*`, inline: true },
+      { name: 'Adresse F8', value: CFG.adresse ? `\`${CFG.adresse}\`` : '—', inline: true },
+      { name: 'Bouton « Se connecter »', value: CFG.cfxJoin ? `cfx.re/join/${CFG.cfxJoin}` : '—', inline: true },
+      { name: 'Rôles staff', value: roles(CFG.staffRoles) },
+      { name: 'Rôles qui voient les salons publics', value: CFG.rolesLecture.length ? roles(CFG.rolesLecture) : 'tout le monde' },
+      { name: 'Métiers « en service »', value: liste(CFG.services).map((s) => `${s.emoji} ${echapper(s.nom)} (\`${s.metier}\`)`).join(' · ') },
+      { name: 'Bienvenue', value: CFG.bienvenue ? 'activée' : 'coupée', inline: true },
+      { name: 'Version', value: `bot ${VERSION}${dernier?.version ? ` · ressource ${dernier.version}` : ''}`, inline: true },
+    );
+}
+
+async function commandeConfig(interaction) {
+  const sous = interaction.options.getSubcommand();
+  if (sous === 'voir') return interaction.reply({ embeds: [embedConfig()], ephemeral: true });
+
+  const effacer = (v) => (v === '-' ? '' : v);
+  if (sous === 'serveur') {
+    const nom = interaction.options.getString('nom');
+    const adresse = interaction.options.getString('adresse');
+    const cfx = interaction.options.getString('cfx');
+    if (nom != null) CFG.nom = effacer(nom.trim());
+    if (adresse != null) CFG.adresse = effacer(adresse.trim());
+    if (cfx != null) CFG.cfxJoin = effacer(cfx.trim().replace(/^.*cfx\.re\/join\//, ''));
+  } else if (sous === 'role') {
+    const type = interaction.options.getString('type', true);
+    const ajouter = interaction.options.getString('action', true) === 'ajouter';
+    const role = interaction.options.getRole('role', true);
+    const cle = type === 'staff' ? 'staffRoles' : 'rolesLecture';
+    const set = new Set(CFG[cle]);
+    if (ajouter) set.add(role.id); else set.delete(role.id);
+    CFG[cle] = [...set];
+  } else if (sous === 'services') {
+    const texte = interaction.options.getString('liste', true).trim();
+    try {
+      CFG.services = /^d[ée]faut$/i.test(texte) ? SERVICES_DEFAUT : lireServices(texte);
+    } catch (err) {
+      return interaction.reply({ content: `❌ ${err.message}. Exemple : \`police=👮 Police, ambulance=🚑 Secours\``, ephemeral: true });
+    }
+  } else if (sous === 'bienvenue') {
+    CFG.bienvenue = interaction.options.getBoolean('actif', true);
+  }
+
+  sauverConfig();
+  await interaction.deferReply({ ephemeral: true });
+  // Rôles ou bienvenue changés : salons et permissions à revoir.
+  await installer();
+  hashPanneau = null;
+  await majPanneau();
+  await journal(`⚙️ <@${interaction.user.id}> a modifié les réglages (${sous}).`);
+  return interaction.editReply({ content: '✅ Réglages enregistrés.', embeds: [embedConfig()] });
+}
+
 // ── Commandes ────────────────────────────────────────────────────────────
 
 const STAFF = PermissionFlagsBits.ManageGuild;
 
 const COMMANDES = [
-  new SlashCommandBuilder().setName('statut').setDescription('Affiche l’état du serveur VESPER RP'),
+  new SlashCommandBuilder().setName('statut').setDescription('Affiche l’état du serveur FiveM'),
   new SlashCommandBuilder().setName('joueurs').setDescription('Liste les joueurs connectés'),
   new SlashCommandBuilder().setName('connexion').setDescription('Comment rejoindre le serveur'),
   new SlashCommandBuilder().setName('update').setDescription('Publier une mise à jour dans #mises-à-jour')
@@ -852,6 +1108,29 @@ const COMMANDES = [
     .addSubcommand((s) => s.setName('terminer').setDescription('Fin de la maintenance')),
   new SlashCommandBuilder().setName('installer').setDescription('Recrée les salons et rôles du bot s’il en manque')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName('config').setDescription('Réglages du bot')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addSubcommand((s) => s.setName('voir').setDescription('Afficher les réglages actuels'))
+    .addSubcommand((s) => s.setName('serveur').setDescription('Nom affiché, adresse F8 et bouton « Se connecter » (« - » pour effacer)')
+      .addStringOption((o) => o.setName('nom').setDescription('Nom affiché (vide : celui du serveur FiveM)').setMaxLength(80))
+      .addStringOption((o) => o.setName('adresse').setDescription('Adresse pour F8, ex. 1.2.3.4:30120').setMaxLength(80))
+      .addStringOption((o) => o.setName('cfx').setDescription('Code ou lien cfx.re/join/…').setMaxLength(60)))
+    .addSubcommand((s) => s.setName('role').setDescription('Rôles du staff, et rôles qui voient les salons publics')
+      .addStringOption((o) => o.setName('type').setDescription('Quel réglage').setRequired(true)
+        .addChoices({ name: 'Staff (salons privés, commandes staff)', value: 'staff' },
+          { name: 'Lecture des salons publics', value: 'lecture' }))
+      .addStringOption((o) => o.setName('action').setDescription('Ajouter ou retirer').setRequired(true)
+        .addChoices({ name: 'Ajouter', value: 'ajouter' }, { name: 'Retirer', value: 'retirer' }))
+      .addRoleOption((o) => o.setName('role').setDescription('Le rôle').setRequired(true)))
+    .addSubcommand((s) => s.setName('services').setDescription('Métiers affichés « en service » sur le panneau')
+      .addStringOption((o) => o.setName('liste').setRequired(true).setMaxLength(500)
+        .setDescription('metier=emoji Nom, séparés par des virgules — ou « défaut »')))
+    .addSubcommand((s) => s.setName('bienvenue').setDescription('Message de bienvenue aux nouveaux membres')
+      .addBooleanOption((o) => o.setName('actif').setDescription('Activer ou couper').setRequired(true))),
+  new SlashCommandBuilder().setName('maj').setDescription('Mises à jour du bot')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addSubcommand((s) => s.setName('verifier').setDescription('Chercher tout de suite une nouvelle version'))
+    .addSubcommand((s) => s.setName('etat').setDescription('Versions installées et dernière version publiée')),
   new SlashCommandBuilder().setName('id').setDescription('Fiche d’un joueur : personnages, argent, inventaire, véhicules, propriétés…')
     .setDefaultMemberPermissions(STAFF)
     .addStringOption((o) => o.setName('joueur')
@@ -1019,12 +1298,12 @@ function embedsFiche(f) {
 
 function embedConnexion() {
   const lien = lienConnexion();
-  return new EmbedBuilder().setColor(COULEUR.marque).setTitle('🎮 Rejoindre VESPER RP')
+  return new EmbedBuilder().setColor(COULEUR.marque).setTitle(`🎮 Rejoindre ${nomServeur()}`)
     .setDescription([
       '1. Lancez **FiveM**.',
-      `2. Appuyez sur **F8** et tapez : \`connect ${CFG.adresse}\``,
-      lien ? `3. Ou cliquez simplement : ${lien}` : '3. Ou cherchez **VESPER RP** dans la liste des serveurs.',
-    ].join('\n'));
+      CFG.adresse && `2. Appuyez sur **F8** et tapez : \`connect ${CFG.adresse}\``,
+      lien ? `• Ou cliquez simplement : ${lien}` : `• Ou cherchez **${echapper(nomServeur())}** dans la liste des serveurs.`,
+    ].filter(Boolean).join('\n'));
 }
 
 async function surInteraction(interaction) {
@@ -1059,6 +1338,9 @@ async function surInteraction(interaction) {
     if (interaction.customId === 'vesper:joueurs') {
       return interaction.reply({ embeds: [embedJoueurs(estStaff(interaction))], ephemeral: true });
     }
+    if (interaction.customId.startsWith('vesper:maj:')) {
+      return installerMaj(interaction, interaction.customId.slice('vesper:maj:'.length));
+    }
     if (interaction.customId === 'vesper:notif') {
       const role = etat.roles.notif;
       const membre = interaction.member;
@@ -1086,7 +1368,7 @@ async function surInteraction(interaction) {
       .map((l) => (/^([-•*>#]|\d+[.)]|[^\w\s])/u.test(l) ? l : `• ${l}`)).join('\n');
 
     const e = new EmbedBuilder().setColor(COULEUR.marque)
-      .setAuthor({ name: 'VESPER RP — Mise à jour', iconURL: client.user.displayAvatarURL() })
+      .setAuthor({ name: `${nomServeur()} — Mise à jour`, iconURL: client.user.displayAvatarURL() })
       .setTitle(version ? `${titre} · ${version}` : titre)
       .setDescription(corps.slice(0, 4000))
       .setFooter({ text: `Publié par ${interaction.member?.displayName || interaction.user.username}` })
@@ -1135,6 +1417,31 @@ async function surInteraction(interaction) {
         champ('image', 'Image (lien, facultatif)', TextInputStyle.Short, false, 500, 'https://…'),
       );
     return interaction.showModal(modal);
+  }
+
+  if (cmd === 'config') {
+    if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+      return interaction.reply({ content: 'Réservé aux administrateurs du serveur.', ephemeral: true });
+    }
+    return commandeConfig(interaction);
+  }
+
+  if (cmd === 'maj') {
+    if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+      return interaction.reply({ content: 'Réservé aux administrateurs du serveur.', ephemeral: true });
+    }
+    await interaction.deferReply({ ephemeral: true });
+    const r = await verifierMaj({ forcer: true });
+    const p = r?.publication || publicationConnue;
+    const lignes = [
+      `Bot installé : **${VERSION}**`,
+      `Ressource FiveM : **${dernier?.version || 'injoignable'}**`,
+      r?.erreur ? `Dernière version publiée : impossible de le savoir (${r.erreur})`
+        : `Dernière version publiée : **${p?.version || 'aucune'}**${p?.lien ? ` — ${p.lien}` : ''}`,
+      r?.nouvelle ? `\n🆕 Mise à jour disponible : bouton **Installer** dans <#${etat.salons.majBot}>.`
+        : (r?.aJour ? '\n✅ Le bot est à jour.' : ''),
+    ];
+    return interaction.editReply(lignes.join('\n'));
   }
 
   if (cmd === 'id') {
@@ -1260,9 +1567,9 @@ async function surArrivee(membre) {
   if (!s) return;
   const e = new EmbedBuilder().setColor(COULEUR.marque)
     .setAuthor({ name: membre.user.username, iconURL: membre.user.displayAvatarURL() })
-    .setDescription(`Bienvenue <@${membre.id}> sur **VESPER RP** ! 🌆\n`
+    .setDescription(`Bienvenue <@${membre.id}> sur **${echapper(nomServeur())}** ! 🌆\n`
       + `Tu es notre **${membre.guild.memberCount}ᵉ** membre.\n\n`
-      + `🎮 Pour jouer : **F8** → \`connect ${CFG.adresse}\`\n`
+      + (CFG.adresse ? `🎮 Pour jouer : **F8** → \`connect ${CFG.adresse}\`\n` : '')
       + (salon('statut') ? `📊 État du serveur : <#${etat.salons.statut}>` : ''))
     .setThumbnail(membre.user.displayAvatarURL({ size: 256 }))
     .setTimestamp(new Date());
@@ -1273,8 +1580,27 @@ async function surArrivee(membre) {
 
 let minuterie = null;
 
+// Sans GUILD_ID, le bot adopte le serveur Discord où on l'invite, puis s'y
+// tient : c'est un seul serveur par installation.
+function adopter(g) {
+  CFG.guildId = g.id;
+  sauverConfig();
+  console.log(`Serveur Discord adopté : ${g.name} (${g.id}).`);
+}
+
 async function surPret() {
-  console.log(`Connecté en tant que ${client.user.tag} — VESPER bot v${VERSION}`);
+  console.log(`Connecté en tant que ${client.user.tag} — bot v${VERSION}`);
+
+  if (!CFG.guildId) {
+    const presents = [...client.guilds.cache.values()];
+    if (presents.length === 1) adopter(presents[0]);
+    else {
+      console.warn(presents.length
+        ? 'Le bot est sur plusieurs serveurs Discord : indiquez lequel avec GUILD_ID dans le .env.'
+        : `Pas encore invité. Lien d’invitation : ${lienInvitation()}`);
+      return;
+    }
+  }
 
   // Un seul serveur Discord autorisé.
   for (const g of client.guilds.cache.values()) {
@@ -1286,15 +1612,18 @@ async function surPret() {
 
   guilde = await client.guilds.fetch(CFG.guildId).catch(() => null);
   if (!guilde) {
-    console.warn(`Pas encore invité sur ${CFG.guildId} — en attente.`);
+    console.warn(`Pas encore invité sur ${CFG.guildId}. Lien d’invitation : ${lienInvitation()}`);
     return;
   }
   await guilde.channels.fetch();
   await guilde.roles.fetch();
 
+  // Le nom du serveur FiveM sert aux noms des catégories créées.
+  await releve().catch(() => null);
   await installer();
   await enregistrerCommandes().catch((e) => console.error('commandes', e.message));
-  await journal(`🤖 Bot VESPER v${VERSION} démarré.`);
+  await journal(`🤖 Bot v${VERSION} démarré.`);
+  await annoncerBilanMaj().catch((e) => console.error('bilan de mise à jour', e));
 
   clearInterval(minuterie);
   await cycle();
@@ -1308,6 +1637,7 @@ function demarrer(avecMembres) {
 
   client.once(Events.ClientReady, () => surPret().catch((e) => console.error('démarrage', e)));
   client.on(Events.GuildCreate, (g) => {
+    if (!CFG.guildId) adopter(g);
     if (g.id !== CFG.guildId) {
       console.warn(`Invité sur un serveur non autorisé, départ : ${g.name} (${g.id})`);
       g.leave().catch(() => {});
@@ -1327,14 +1657,14 @@ function demarrer(avecMembres) {
     console.error('interaction', e);
     if (i.isRepliable() && !i.replied && !i.deferred) i.reply({ content: 'Erreur interne.', ephemeral: true }).catch(() => {});
   }));
-  if (avecMembres) client.on(Events.GuildMemberAdd, surArrivee);
+  if (avecMembres) client.on(Events.GuildMemberAdd, (m) => { if (CFG.bienvenue) surArrivee(m); });
 
   return client.login(CFG.token).catch((err) => {
     // L'intention « membres » est privilégiée : tant qu'elle n'est pas
     // cochée dans le portail développeur, Discord refuse la connexion. On
     // tourne alors sans le message de bienvenue plutôt que pas du tout.
     if (avecMembres && /disallowed intents|privileged intent/i.test(String(err.message))) {
-      console.warn('Intention « Server Members » non activée : bienvenue désactivée.');
+      console.warn('Intention « Server Members » non activée dans le portail Discord : pas de message de bienvenue possible.');
       client.destroy();
       return demarrer(false);
     }
@@ -1348,7 +1678,7 @@ if (require.main === module) {
   process.on('unhandledRejection', (e) => console.error('promesse rejetée', e));
   process.on('SIGTERM', () => { client?.destroy(); process.exit(0); });
 
-  demarrer(CFG.bienvenue).catch((e) => {
+  demarrer(true).catch((e) => {
     console.error('connexion impossible', e.message);
     process.exit(1);
   });

@@ -1,71 +1,68 @@
-# Bot Discord VESPER
+# Bot VESPER — bot Discord pour serveur FiveM
+
+Un bot Discord qui relie votre serveur **FiveM (ESX)** à votre Discord, et
+qui **s'installe, se règle et se met à jour tout seul**.
 
 📘 **Documentation complète : [`docs/DOCUMENTATION.md`](docs/DOCUMENTATION.md)**
-
-Deux pièces qui travaillent ensemble :
-
-| Dossier | Quoi | Où ça tourne |
-|---|---|---|
-| `bot/` | le bot Discord (Node.js 18+, discord.js 14) | un service à part (systemd) |
-| `vesper-discord/` | la ressource FiveM, pont entre le serveur et le bot | `resources/[standalone]/vesper-discord` |
+· Changements : [`CHANGELOG.md`](CHANGELOG.md) · Licence MIT, gratuit.
 
 ## Ce qu'il fait
 
-- **Statut en direct** : panneau dans `📊・statut-serveur` (joueurs, services
-  en ligne, pic du jour, record), compteurs en salons vocaux, présence du bot,
-  annonces de panne, de retour et de redémarrage, rôle « 🎮 En jeu ».
+- **Statut en direct** : panneau dans `📊・statut-serveur` (joueurs, qui est en
+  service, pic du jour, record, bouton « Se connecter »), compteurs en salons
+  vocaux, annonces de panne, de retour et de redémarrage, rôle « 🎮 En jeu ».
 - **Staff** : salon `📋・logs-joueurs` (connexions, départs, personnages,
-  métiers, morts, redémarrages), fiche complète d'un joueur avec `/id`
-  (argent, inventaire, véhicules, propriétés, casier…), ressources lancées ou
-  arrêtées, journal du bot.
-- **Commandes** : `/statut`, `/joueurs`, `/connexion`, `/id`, `/update` (mise à jour
-  dans `📢・mises-à-jour`), `/annonce-jeu`, `/maintenance`, `/installer`,
-  `/journaux`.
-- **Journaux des scripts** : un script compatible (`vesper-lspd`, `vesper-ems`) se
-  déclare à la ressource ; le bot crée **tout seul** sa catégorie
-  « LOGS — … » réservée au staff, un salon par sujet et leurs webhooks.
-  Un serveur ne reçoit que les journaux des scripts qu'il fait tourner ;
-  `/journaux retirer` nettoie ceux d'un script désinstallé.
-  Voir [`docs/journaux.md`](docs/journaux.md).
+  métiers, morts, redémarrages) et **fiche complète d'un joueur avec `/id`**
+  (argent, inventaire, véhicules, propriétés, casier…).
+- **Commandes** : `/statut`, `/joueurs`, `/connexion`, `/id`, `/update`,
+  `/annonce-jeu`, `/maintenance`, `/journaux`, `/config`, `/maj`, `/installer`.
+- **Journaux des scripts** : un script compatible se déclare, le bot crée sa
+  catégorie « LOGS — … », ses salons et ses webhooks
+  ([`docs/journaux.md`](docs/journaux.md)).
+- **Mises à jour en un clic** : chaque nouvelle version est annoncée dans
+  `🆕・updates-bot` avec un bouton **Installer** pour les administrateurs.
+  Sauvegarde avant, retour arrière automatique si elle plante.
 
-## Installation
+## Installer (Linux, 5 minutes)
 
-### La ressource FiveM
+**Il faut** : une machine Linux avec systemd, **Node.js 18.17+**, sur la
+**même machine** que le serveur FiveM, avec ESX et oxmysql côté serveur.
 
-1. Copier `vesper-discord/` dans `resources/[standalone]/`.
-2. Dans `server.cfg` :
+1. **Créer l'application Discord** sur
+   [discord.com/developers/applications](https://discord.com/developers/applications) :
+   *New Application* → onglet *Bot* → *Reset Token* (copiez-le).
+2. **Lancer l'installation** :
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/CedricPoint/vesper-discord-bot/main/install.sh | sudo bash
+   ```
+   Le script demande le jeton, installe le bot en service, copie la ressource
+   FiveM si vous lui donnez votre dossier `resources`, et affiche la suite.
+3. **Dans `server.cfg`**, ajouter les deux lignes affichées :
    ```cfg
-   set vesper_discord_jeton "un-long-jeton-aleatoire"
+   set vesper_discord_jeton "…"
    ensure vesper-discord
    ```
-   ⚠️ `set`, jamais `sets` : un `sets` est publié dans la liste des serveurs.
-3. Le point d'entrée HTTP (`/vesper-discord/…`) n'accepte que **127.0.0.1**
-   et ce jeton : le bot doit tourner sur la même machine.
+4. **Inviter le bot** avec le lien affiché. Il adopte ce serveur Discord,
+   crée ses salons et ses rôles.
+5. **Régler** depuis Discord avec `/config` : nom affiché, adresse F8,
+   rôles staff, rôles qui voient les salons publics, métiers « en service ».
 
-### Le bot
+## Mettre à jour
 
-```bash
-cd bot
-npm ci --omit=dev
-cp .env.example .env && chmod 600 .env   # puis remplir
-node src/index.js
-```
+Rien à faire : le bot vérifie toutes les 6 heures et annonce la nouvelle
+version dans `🆕・updates-bot`. Un administrateur clique sur **Installer**.
+`/maj verifier` force la vérification.
 
-En service : `bot/deploy/vesper-discord-bot.service` (utilisateur dédié
-`vesperbot`, `/opt/vesper-discord-bot`, écriture limitée à `data/`).
+## Ce qui ne sera jamais dans ce dépôt
 
-Permissions Discord du bot : gérer les salons, gérer les rôles, **gérer les
-webhooks**, envoyer des messages, intégrer des liens, lire l'historique.
+Le `.env` (jeton du bot, jeton du pont), `data/` (réglages, salons,
+webhooks). Le pont FiveM n'accepte que **127.0.0.1** et son jeton.
 
-## Mettre à jour (VESPER)
+## Publier une version (mainteneur)
 
-1. Sauvegarde : `tar` de la ressource dans `sauvegardes-code/` et du bot
-   dans `/opt/vesper-discord-bot-sauvegardes/`.
-2. Copier les fichiers, `chown`, `luac5.4 -p` / `node --check`.
-3. Ressource : `refresh` puis `restart vesper-discord` (les webhooks sont en
-   KVP, ils survivent). Bot : `systemctl restart vesper-discord-bot`.
-
-## Secrets
-
-Le `.env`, `data/etat.json` (il contient les identifiants des webhooks) et
-les webhooks eux-mêmes ne sont **jamais** dans ce dépôt.
+1. Section `## [X.Y.Z]` dans `CHANGELOG.md`, version dans
+   `bot/package.json` (et `vesper-discord/fxmanifest.lua` si la ressource
+   change).
+2. `git tag vX.Y.Z && git push --tags` : l'action GitHub fabrique l'archive,
+   son empreinte SHA-256 et la version. Les bots installés l'annoncent au
+   relevé suivant.

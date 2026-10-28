@@ -1,6 +1,6 @@
 [Unit]
-Description=Bot Discord VESPER RP (statut du serveur, joueurs, mises a jour)
-After=network-online.target vesper.service
+Description=Bot Discord VESPER (statut du serveur FiveM, joueurs, mises a jour)
+After=network-online.target
 Wants=network-online.target
 
 [Service]
@@ -9,7 +9,9 @@ User=vesperbot
 Group=vesperbot
 WorkingDirectory=/opt/vesper-discord-bot
 EnvironmentFile=/opt/vesper-discord-bot/.env
-ExecStart=/usr/bin/node src/index.js
+# Le lanceur relance le bot apres une mise a jour (code 75) et revient a
+# l'ancienne version si la nouvelle plante au demarrage.
+ExecStart=/usr/bin/node lanceur.js
 Restart=always
 RestartSec=10
 
@@ -17,7 +19,8 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/vesper-discord-bot/data
+# Tout le dossier : le bot remplace lui-meme son code lors d'une mise a jour.
+ReadWritePaths=/opt/vesper-discord-bot
 
 [Install]
 WantedBy=multi-user.target

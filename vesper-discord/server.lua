@@ -16,6 +16,7 @@
 ---   GET  /fiche?q=…       fiche complète d'un joueur (fiche.lua, commande /id)
 ---   GET  /recherche?q=…   joueurs correspondants (autocomplétion de /id)
 ---   POST /annonce         {"message": "...", "auteur": "..."} → tchat en jeu
+---   POST /maj             {"version": "...", "fichiers": {nom: contenu}} → se met à jour
 ---   POST /webhooks        {"id": "ressource", "webhooks": {sujet: url}} → journaux
 ---                         (voir journaux.lua : les scripts déclarent leurs salons)
 
@@ -194,7 +195,62 @@ local function etat(depuis)
         dernier = numero,
         -- Les scripts qui ont déclaré des journaux (journaux.lua).
         modules = VesperJournauxEtat and VesperJournauxEtat() or {},
+        -- Le bot compare cette version à la dernière publiée (mises à jour).
+        version = GetResourceMetadata(GetCurrentResourceName(), 'version', 0),
     }
+end
+
+-- ── Mise à jour de la ressource par le bot ───────────────────────────────
+--
+-- Le bot n'a pas le droit d'écrire dans le dossier des ressources (autre
+-- utilisateur système) : il nous ENVOIE les nouveaux fichiers, et c'est la
+-- ressource qui les écrit avec SaveResourceFile, puis se recharge.
+--
+-- ⚠️ Rien n'est écrit tant que TOUS les fichiers Lua ne compilent pas : une
+-- mise à jour à moitié posée laisserait la ressource hors service.
+-- ⚠️ `refresh` AVANT `restart` : un fichier ajouté au manifeste n'est pas
+-- chargé sans lui, et rien ne le signale.
+
+local FICHIER_PERMIS = '^[%w_%-]+%.lua$'
+
+function installerMiseAJour(donnees)
+    local fichiers = donnees.fichiers
+    if type(fichiers) ~= 'table' or next(fichiers) == nil then return false, 'aucun fichier' end
+    if not fichiers['fxmanifest.lua'] then return false, 'fxmanifest.lua manquant' end
+
+    for nom, contenu in pairs(fichiers) do
+        if type(nom) ~= 'string' or not nom:match(FICHIER_PERMIS) then
+            return false, ('nom de fichier refusé : %s'):format(tostring(nom))
+        end
+        if type(contenu) ~= 'string' or contenu == '' then
+            return false, ('fichier vide : %s'):format(nom)
+        end
+        local fonction, erreur = load(contenu, '=' .. nom, 't', {})
+        if not fonction then return false, ('%s ne compile pas : %s'):format(nom, tostring(erreur)) end
+    end
+
+    local ressource = GetCurrentResourceName()
+    local avant = GetResourceMetadata(ressource, 'version', 0) or 'inconnue'
+    local ecrits = {}
+    for nom, contenu in pairs(fichiers) do
+        -- La version précédente reste à côté, sous un nom que le manifeste
+        -- ne charge jamais, pour un retour arrière à la main.
+        local ancien = LoadResourceFile(ressource, nom)
+        if ancien then SaveResourceFile(ressource, nom .. '.avant-maj-' .. avant, ancien, -1) end
+        if not SaveResourceFile(ressource, nom, contenu, -1) then
+            return false, ('écriture impossible : %s'):format(nom)
+        end
+        ecrits[#ecrits + 1] = nom
+    end
+
+    print(('[vesper-discord] mise à jour %s → %s (%d fichiers), rechargement…'):format(
+        avant, tostring(donnees.version or '?'), #ecrits))
+    -- Laisser partir la réponse HTTP avant de nous arrêter.
+    SetTimeout(1000, function()
+        ExecuteCommand('refresh')
+        SetTimeout(1000, function() ExecuteCommand('restart ' .. ressource) end)
+    end)
+    return true, ecrits
 end
 
 local function parametre(chemin, nom)
@@ -267,6 +323,17 @@ SetHttpHandler(function(req, res)
             print(('[vesper-discord] annonce de %s : %s'):format(
                 tostring(donnees.auteur or 'Discord'), message))
             repondre(200, { ok = true })
+        end)
+        return
+    end
+
+    if req.method == 'POST' and chemin == '/maj' then
+        req.setDataHandler(function(brut)
+            local ok, donnees = pcall(json.decode, brut)
+            if not ok or type(donnees) ~= 'table' then return repondre(400, { erreur = 'json' }) end
+            local reussi, info = installerMiseAJour(donnees)
+            if not reussi then return repondre(400, { erreur = info }) end
+            repondre(200, { ok = true, fichiers = info })
         end)
         return
     end

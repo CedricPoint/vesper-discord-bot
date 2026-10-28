@@ -1,0 +1,46 @@
+# Publie une version : pousser un tag vX.Y.Z suffit.
+#
+# Fabrique vesper-discord-bot-X.Y.Z.tgz (bot + ressource FiveM + doc) et son
+# empreinte SHA-256, et crée la version GitHub avec la section X.Y.Z du
+# CHANGELOG comme note. Les bots installés la voient au relevé suivant et
+# l'annoncent dans leur salon 🆕・updates-bot.
+name: Publier une version
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  publier:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Vérifier que le tag, le bot et le CHANGELOG concordent
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          test "$(node -p "require('./bot/package.json').version")" = "$V" \
+            || { echo "bot/package.json n'est pas en $V"; exit 1; }
+          grep -q "^## \[$V\]" CHANGELOG.md || { echo "CHANGELOG.md n'a pas de section [$V]"; exit 1; }
+          node --check bot/src/index.js && node --check bot/src/maj.js && node --check bot/lanceur.js
+
+      - name: Fabriquer l'archive
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          tar czf "dist/vesper-discord-bot-$V.tgz" \
+            --exclude='bot/node_modules' --exclude='bot/.env' --exclude='bot/data' \
+            bot vesper-discord docs README.md CHANGELOG.md LICENSE install.sh
+          (cd dist && sha256sum "vesper-discord-bot-$V.tgz" > "vesper-discord-bot-$V.tgz.sha256")
+          awk -v v="$V" '$0 ~ "^## \\[" v "\\]" {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md > notes.md
+          cat notes.md
+
+      - name: Créer la version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" dist/* --title "Bot VESPER $V" --notes-file notes.md
