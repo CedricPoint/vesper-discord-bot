@@ -91,8 +91,8 @@ invité ailleurs ensuite, il en repart immédiatement.
    `/opt/vesper-discord-bot`, demande le jeton, génère le jeton du pont,
    copie la ressource si vous lui donnez votre dossier `resources`, installe
    et démarre le service.
-3. Ajoutez au `server.cfg` les deux lignes affichées, puis `refresh` et
-   `ensure vesper-discord` :
+3. Ajoutez au `server.cfg` les lignes affichées, puis redémarrez le serveur
+   (ou `refresh` et `ensure vesper-discord`) :
    ```cfg
    set vesper_discord_jeton "…"
    add_ace resource.vesper-discord command.refresh allow
