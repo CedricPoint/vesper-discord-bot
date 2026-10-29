@@ -40,14 +40,16 @@ qui **s'installe, se règle et se met à jour tout seul**.
    ```
    Le script demande le jeton, installe le bot en service, copie la ressource
    FiveM si vous lui donnez votre dossier `resources`, et affiche la suite.
-3. **Dans `server.cfg`**, ajouter les deux lignes affichées :
+3. **Dans `server.cfg`**, ajouter les lignes affichées :
    ```cfg
    set vesper_discord_jeton "…"
    add_ace resource.vesper-discord command.refresh allow
    add_ace resource.vesper-discord command.restart allow
+   add_ace resource.vesper-discord command.stop allow
+   add_ace resource.vesper-discord command.start allow
    ensure vesper-discord
    ```
-   Les deux `add_ace` permettent à la ressource de se recharger seule quand
+   Les quatre `add_ace` permettent à la ressource de se recharger seule quand
    vous installez une mise à jour depuis Discord.
 4. **Inviter le bot** avec le lien affiché. Il adopte ce serveur Discord,
    crée ses salons et ses rôles.

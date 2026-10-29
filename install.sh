@@ -119,9 +119,11 @@ cat <<EOF
       set vesper_discord_jeton "$JETON_PONT"
       add_ace resource.vesper-discord command.refresh allow
       add_ace resource.vesper-discord command.restart allow
+      add_ace resource.vesper-discord command.stop allow
+      add_ace resource.vesper-discord command.start allow
       ensure vesper-discord
 
-    ⚠️ « set », jamais « sets » (un sets est public). Les deux add_ace laissent la
+    ⚠️ « set », jamais « sets » (un sets est public). Les quatre add_ace laissent la
     ressource se recharger seule lors des mises à jour. Puis redémarrez le serveur.
 
  2. Inviter le bot sur votre serveur Discord :

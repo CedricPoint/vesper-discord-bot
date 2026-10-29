@@ -3,6 +3,12 @@
 Chaque section ci-dessous devient la note de la version publiée, affichée
 par le bot dans son salon 🆕・updates-bot.
 
+## [1.5.2]
+
+- La ressource annonce la version du code **réellement chargé** : un `refresh` relit le manifeste sans recharger le code, et l'installation pouvait se croire terminée alors que l'ancien code tournait encore.
+- Il faut **quatre** droits pour qu'elle se recharge seule, et non deux : `restart` relance lui-même `stop` puis `start`. Ajoutez dans `server.cfg` :
+  `add_ace resource.vesper-discord command.stop allow` et `add_ace resource.vesper-discord command.start allow`. L'annonce d'une mise à jour les indique s'ils manquent.
+
 ## [1.5.1]
 
 **Mises à jour plus sûres pour la ressource FiveM.**

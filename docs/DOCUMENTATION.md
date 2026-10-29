@@ -1,6 +1,6 @@
 # Bot VESPER — documentation
 
-> Bot **1.5.1** · ressource FiveM **`vesper-discord` 1.4.1** · licence MIT.
+> Bot **1.5.2** · ressource FiveM **`vesper-discord` 1.4.2** · licence MIT.
 > Brancher un script sur les salons de journaux : [`journaux.md`](journaux.md).
 > Ce qui change d'une version à l'autre : [`../CHANGELOG.md`](../CHANGELOG.md).
 
@@ -97,12 +97,15 @@ invité ailleurs ensuite, il en repart immédiatement.
    set vesper_discord_jeton "…"
    add_ace resource.vesper-discord command.refresh allow
    add_ace resource.vesper-discord command.restart allow
+   add_ace resource.vesper-discord command.stop allow
+   add_ace resource.vesper-discord command.start allow
    ensure vesper-discord
    ```
    ⚠️ `set`, **jamais `sets`** : un `sets` est publié dans la liste des serveurs.
-   Les deux `add_ace` laissent la ressource se recharger seule lors d'une mise
-   à jour : sans elles, FiveM refuse (« Access denied for command refresh »).
-   Elles ne donnent que ces deux commandes, à cette seule ressource.
+   Les quatre `add_ace` laissent la ressource se recharger seule lors d'une
+   mise à jour : sans elles, FiveM refuse (« Access denied for command … »).
+   `restart` relance lui-même `stop` puis `start`, d'où les quatre. Elles ne
+   valent que pour cette ressource.
 4. Ouvrez le **lien d'invitation** affiché (permission Administrateur). Le
    bot adopte ce serveur Discord et crée tout.
 5. Réglez-le avec `/config` (§ 4).
@@ -349,7 +352,7 @@ désinstallé. Guide du développeur : [`journaux.md`](journaux.md).
 
 ### Si la ressource n'a pas le droit de se recharger
 
-Sans les deux lignes `add_ace … command.refresh` et `command.restart` (§ 3),
+Sans les quatre lignes `add_ace … command.refresh`, `restart`, `stop` et `start` (§ 3),
 l'annonce le signale en ⚠️ avec les lignes à ajouter, et l'installation
 s'arrête **avant d'écrire quoi que ce soit** : ni la ressource ni le bot ne
 sont touchés.

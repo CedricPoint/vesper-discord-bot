@@ -24,6 +24,12 @@
 
 local JETON = GetConvar('vesper_discord_jeton', '')
 
+-- ⚠️ La version du code QUI TOURNE, lue une fois au chargement. Relue plus
+-- tard, GetResourceMetadata donne celle du manifeste sur le disque, qu'un
+-- simple `refresh` met à jour sans recharger le code : le bot a cru le
+-- 29/10 qu'une mise à jour était chargée alors que l'ancien code tournait.
+local VERSION_CHARGEE = GetResourceMetadata(GetCurrentResourceName(), 'version', 0)
+
 local ESX = nil
 CreateThread(function()
     local ok, obj = pcall(function()
@@ -223,7 +229,7 @@ local function etat(depuis)
         -- Les scripts qui ont déclaré des journaux (journaux.lua).
         modules = VesperJournauxEtat and VesperJournauxEtat() or {},
         -- Le bot compare cette version à la dernière publiée (mises à jour).
-        version = GetResourceMetadata(GetCurrentResourceName(), 'version', 0),
+        version = VERSION_CHARGEE,
         -- Lignes server.cfg qui manquent pour se mettre à jour seule (vide = prête).
         droits_manquants = VesperDroitsMiseAJour and VesperDroitsMiseAJour() or {},
     }
@@ -243,12 +249,15 @@ end
 local FICHIER_PERMIS = '^[%w_%-]+%.lua$'
 
 -- ⚠️ Une ressource n'a pas le droit de lancer `refresh` ni `restart` sans
--- ACE dans server.cfg (« Access denied for command refresh »). Sans elles,
--- les fichiers seraient écrits mais jamais chargés : on refuse AVANT.
+-- ACE dans server.cfg (« Access denied for command refresh »). Et `restart`
+-- relance lui-même `stop` puis `start` sous le même principal : il faut les
+-- quatre (le 29/10, refresh et restart seuls → « Access denied for command
+-- stop » et l'ancien code continuait de tourner). Sans eux, les fichiers
+-- seraient écrits mais jamais chargés : on refuse AVANT d'écrire.
 local function droitsManquants()
     local principal = 'resource.' .. GetCurrentResourceName()
     local manque = {}
-    for _, commande in ipairs({ 'refresh', 'restart' }) do
+    for _, commande in ipairs({ 'refresh', 'restart', 'stop', 'start' }) do
         if not IsPrincipalAceAllowed(principal, 'command.' .. commande) then
             manque[#manque + 1] = ('add_ace %s command.%s allow'):format(principal, commande)
         end
