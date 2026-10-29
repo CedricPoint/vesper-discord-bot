@@ -368,7 +368,16 @@ SetHttpHandler(function(req, res)
     -- Inventaires (/inventaire) : coffres et objets, SQL aussi.
     if req.method == 'GET' and chemin:find('^/inventaire/') then
         local q = parametre(req.path or '', 'q')
+        if chemin == '/inventaire/historique' then
+            local p = {}
+            for _, cle in ipairs({ 'licence', 'objet', 'texte', 'depuis', 'limite', 'decalage' }) do
+                local v = parametre(req.path or '', cle)
+                if v ~= '' then p[cle] = v end
+            end
+            q = p
+        end
         local fonctions = {
+            ['/inventaire/historique'] = VesperInventaireHistorique,
             ['/inventaire/coffre'] = VesperInventaireCoffre,
             ['/inventaire/objet'] = VesperInventaireObjet,
             ['/inventaire/recherche-coffre'] = function(t) return { resultats = VesperInventaireRecherche(t, 25) } end,

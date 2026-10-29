@@ -3,6 +3,14 @@
 Chaque section ci-dessous devient la note de la version publiée, affichée
 par le bot dans son salon 🆕・updates-bot.
 
+## [1.7.0]
+
+**Historique des objets d'un joueur : `/inventaire historique`.**
+
+- 🎒 Chaque objet **gagné ou perdu** par les personnages d'une licence, du plus récent au plus ancien : quantité, ce qui reste ensuite, le personnage, et la **raison**. Par exemple : utilisé, donné à…, reçu de…, déposé dans le coffre de véhicule AB123CD, achat, fabrication, fouille, admin, ou « par le script X ».
+- Filtres : un objet, une période, un mot de la raison. Pages de 15, et **📄 Exporter en fichier** jusqu'à 1000 mouvements, pour un dossier ou un remboursement.
+- Il faut **vesper-inventory 1.6.0 ou plus**, qui range ces mouvements. La ressource FiveM passe en 1.6.0.
+
 ## [1.6.1]
 
 - `/inventaire objet` et la recherche de `/inventaire coffre` trouvent de nouveau les noms qui contiennent un `_` (« water_bottle », « gang_ballas ») : ce caractère était retiré au lieu d'être protégé dans la requête.

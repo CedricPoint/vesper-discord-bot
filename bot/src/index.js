@@ -1296,6 +1296,7 @@ async function commandeInventaire(interaction) {
   if (!estStaff(interaction)) return interaction.reply({ content: 'Réservé au staff.', ephemeral: true });
   const sous = interaction.options.getSubcommand();
   await interaction.deferReply({ ephemeral: true });
+  if (sous === 'historique') return commandeHistoriqueInventaire(interaction);
   const q = sous === 'coffre' ? interaction.options.getString('recherche', true) : interaction.options.getString('objet', true);
   let r;
   try {
@@ -1320,11 +1321,107 @@ async function commandeInventaire(interaction) {
 
 async function choixInventaire(interaction) {
   const focus = interaction.options.getFocused(true);
+  if (focus.name === 'joueur') {
+    try {
+      const r = await recuperer(`/vesper-discord/recherche?q=${encodeURIComponent(focus.value || '')}`);
+      return liste(r.resultats).map((x) => ({ name: String(x.label).slice(0, 100), value: String(x.valeur).slice(0, 100) }));
+    } catch { return []; }
+  }
   const chemin = focus.name === 'recherche' ? 'recherche-coffre' : 'recherche-objet';
   try {
     const r = await recuperer(`/vesper-discord/inventaire/${chemin}?q=${encodeURIComponent(focus.value || '')}`);
     return liste(r.resultats).map((x) => ({ name: String(x.label).slice(0, 100), value: String(x.valeur).slice(0, 100) }));
   } catch { return []; }
+}
+
+// ── /inventaire historique : chaque gain / perte d'objet d'un joueur ────
+
+const MVT_PAR_PAGE = 15;
+const requetesMvt = new Map(); // clé → { params, titre, page, expire }
+
+function ligneMouvement(l) {
+  const q = Number(l.quantite) || 0;
+  const signe = q > 0 ? `🟢 +${q}` : `🔴 ${q}`;
+  const perso = l.personnage ? ` · ${echapper(l.personnage, 30)}` : '';
+  return `${ts(l.quand, 'd')} ${ts(l.quand, 'T')} · ${signe} **${echapper(l.label || l.objet, 40)}** (reste ${l.solde})${perso}\n↳ ${echapper(l.raison || 'inconnue', 120)}`;
+}
+
+async function pageMouvements(cle) {
+  const q = requetesMvt.get(cle);
+  const r = await recuperer(`/vesper-discord/inventaire/historique?${parametresLogs({ ...q.params, limite: MVT_PAR_PAGE, decalage: q.page * MVT_PAR_PAGE })}`);
+  const pages = Math.max(1, Math.ceil((r.total || 0) / MVT_PAR_PAGE));
+  const lignes = liste(r.lignes).map(ligneMouvement);
+  const e = new EmbedBuilder().setColor(COULEUR.marque)
+    .setTitle(`🎒 ${q.titre}`.slice(0, 256))
+    .setDescription(lignes.length ? lignes.join('\n').slice(0, 4000) : 'Aucun mouvement ne correspond.')
+    .setFooter({ text: `Page ${q.page + 1} / ${pages} · ${r.total || 0} mouvement(s) · du plus récent au plus ancien` });
+  const rangee = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`vmvt:prec:${cle}`).setEmoji('◀️').setStyle(ButtonStyle.Secondary).setDisabled(q.page === 0),
+    new ButtonBuilder().setCustomId(`vmvt:suiv:${cle}`).setEmoji('▶️').setStyle(ButtonStyle.Secondary).setDisabled(q.page + 1 >= pages),
+    new ButtonBuilder().setCustomId(`vmvt:export:${cle}`).setLabel('Exporter en fichier').setEmoji('📄')
+      .setStyle(ButtonStyle.Primary).setDisabled(!r.total),
+  );
+  return { embeds: [e], components: [rangee], allowedMentions: { parse: [] } };
+}
+
+async function commandeHistoriqueInventaire(interaction) {
+  let j;
+  try {
+    j = await licenceDuJoueur(interaction.options.getString('joueur', true));
+  } catch (err) {
+    return interaction.editReply(`❌ Le serveur n’a pas répondu (${err.message}).`);
+  }
+  if (j.candidats) {
+    return interaction.editReply(j.candidats.length
+      ? `Plusieurs joueurs correspondent, choisissez dans la liste proposée :\n${j.candidats.slice(0, 10).map((x) => `• ${x.label}`).join('\n')}`
+      : '❌ Aucun joueur trouvé.');
+  }
+  const periode = interaction.options.getString('periode');
+  const params = {
+    licence: j.licence,
+    objet: interaction.options.getString('objet') || undefined,
+    texte: interaction.options.getString('raison') || undefined,
+    depuis: periode ? maintenant() - PERIODES[periode] : undefined,
+  };
+  const morceaux = [`Objets de ${j.nom ? j.nom.replace(/^[🟢⚫🔑]\s*/u, '') : j.licence}`];
+  if (params.objet) morceaux.push(`· ${params.objet}`);
+  if (params.texte) morceaux.push(`· raison « ${params.texte} »`);
+  if (periode) morceaux.push(`(${CHOIX_PERIODES.find((c) => c.value === periode).name.toLowerCase()})`);
+  const maintenant_ = Date.now();
+  for (const [k, v] of requetesMvt) if (v.expire < maintenant_) requetesMvt.delete(k);
+  const cle = crypto.randomBytes(5).toString('hex');
+  requetesMvt.set(cle, { params, titre: morceaux.join(' '), page: 0, expire: maintenant_ + 30 * 60 * 1000 });
+  try {
+    const page = await pageMouvements(cle);
+    await journal(`🎒 <@${interaction.user.id}> a consulté l’historique des objets : ${morceaux.join(' ')} (\`${j.licence}\`).`);
+    return interaction.editReply(page);
+  } catch (err) {
+    if (err.status === 404) return interaction.editReply(`❌ ${err.message.replace(/ \(HTTP 404\)$/, '')}.`);
+    return interaction.editReply(`❌ Historique indisponible (${err.message}). La ressource vesper-discord est-elle en version 1.6.0 ou plus ?`);
+  }
+}
+
+async function boutonMouvements(interaction) {
+  const [, action, cle] = interaction.customId.split(':');
+  const q = requetesMvt.get(cle);
+  if (!q) return interaction.reply({ content: 'Cette recherche a expiré : relancez /inventaire historique.', ephemeral: true });
+  q.expire = Date.now() + 30 * 60 * 1000;
+  if (action === 'export') {
+    await interaction.deferReply({ ephemeral: true });
+    const r = await recuperer(`/vesper-discord/inventaire/historique?${parametresLogs({ ...q.params, limite: 1000 })}`);
+    const lignes = liste(r.lignes).map((l) => {
+      const d = new Date(l.quand * 1000).toLocaleString('fr-FR', { timeZone: 'Europe/Paris' });
+      const qte = Number(l.quantite) > 0 ? `+${l.quantite}` : String(l.quantite);
+      return `[${d}] ${qte} ${l.label || l.objet} (${l.objet}) · reste ${l.solde} · ${l.personnage || l.identifiant} · ${l.raison || 'inconnue'}`;
+    });
+    const entete = `${q.titre}\n${r.total} mouvement(s)${r.total > 1000 ? ', les 1000 plus récents' : ''} — exporté le ${new Date().toLocaleString('fr-FR', { timeZone: 'Europe/Paris' })}\n${'═'.repeat(60)}\n\n`;
+    const fichier = new AttachmentBuilder(Buffer.from(entete + lignes.join('\n'), 'utf8'), { name: `objets-${cle}.txt` });
+    await journal(`📄 <@${interaction.user.id}> a exporté ${Math.min(r.total, 1000)} mouvement(s) d’objets : ${q.titre}.`);
+    return interaction.editReply({ content: `📄 ${Math.min(r.total, 1000)} mouvement(s).`, files: [fichier] });
+  }
+  q.page = Math.max(0, q.page + (action === 'suiv' ? 1 : -1));
+  await interaction.deferUpdate();
+  return interaction.editReply(await pageMouvements(cle));
 }
 
 // Bouton « Historique » : la recherche /logs sur la plaque, le coffre ou l'objet.
@@ -1483,7 +1580,13 @@ const COMMANDES = [
         .setRequired(true).setAutocomplete(true).setMaxLength(100)))
     .addSubcommand((s) => s.setName('objet').setDescription('Qui détient cet objet, et combien (repérer une duplication)')
       .addStringOption((o) => o.setName('objet').setDescription('Nom ou libellé de l’objet')
-        .setRequired(true).setAutocomplete(true).setMaxLength(100))),
+        .setRequired(true).setAutocomplete(true).setMaxLength(100)))
+    .addSubcommand((s) => s.setName('historique').setDescription('Chaque objet gagné ou perdu par un joueur, et pourquoi (licence, personnage…)')
+      .addStringOption((o) => o.setName('joueur').setDescription('Licence, id en jeu, personnage, pseudo…')
+        .setRequired(true).setAutocomplete(true).setMaxLength(100))
+      .addStringOption((o) => o.setName('objet').setDescription('Seulement cet objet').setAutocomplete(true).setMaxLength(100))
+      .addStringOption((o) => o.setName('periode').setDescription('Depuis').addChoices(...CHOIX_PERIODES))
+      .addStringOption((o) => o.setName('raison').setDescription('Raison contenant ce texte (donné, coffre, plaque, script…)').setMaxLength(80))),
   new SlashCommandBuilder().setName('journaux').setDescription('Scripts reliés au bot et leurs salons de journaux')
     .setDefaultMemberPermissions(STAFF)
     .addBooleanOption((o) => o.setName('resynchroniser')
@@ -1671,6 +1774,10 @@ async function surInteraction(interaction) {
   if (interaction.isAutocomplete() && interaction.commandName === 'inventaire') {
     if (!estStaff(interaction)) return interaction.respond([]).catch(() => {});
     return interaction.respond(await choixInventaire(interaction)).catch(() => {});
+  }
+  if (interaction.isButton() && interaction.customId.startsWith('vmvt:')) {
+    if (!estStaff(interaction)) return interaction.reply({ content: 'Réservé au staff.', ephemeral: true });
+    return boutonMouvements(interaction);
   }
   if (interaction.isButton() && interaction.customId.startsWith('vinv:hist:')) {
     if (!estStaff(interaction)) return interaction.reply({ content: 'Réservé au staff.', ephemeral: true });
@@ -2060,5 +2167,5 @@ if (require.main === module) {
     process.exit(1);
   });
 } else {
-  module.exports = { embedsFiche, embedEvenement, embedCoffre, embedObjet };
+  module.exports = { embedsFiche, embedEvenement, embedCoffre, embedObjet, ligneMouvement };
 }

@@ -171,6 +171,47 @@ function VesperInventaireCoffre(valeur)
     return c
 end
 
+-- ── /inventaire historique ───────────────────────────────────────────────
+-- Chaque gain / perte d'objet d'un personnage, avec sa raison : table
+-- `vesper_inventory_mouvements` de vesper-inventory (1.6.0 ou plus). Sans
+-- elle, la commande répond que l'historique n'existe pas sur ce serveur.
+
+--- p = { licence, objet, texte, depuis, limite, decalage }
+function VesperInventaireHistorique(p)
+    if not aLaTable('vesper_inventory_mouvements') then
+        return nil, "pas d'historique des objets sur ce serveur (vesper-inventory 1.6.0 ou plus)"
+    end
+    local licence = tostring(p.licence or '')
+    local h = licence:match('(%x+)$')
+    if not h or #h < 16 then return nil, 'licence invalide' end
+    local cond, params = { 'licence = ?' }, { 'license:' .. h }
+    if p.objet and p.objet ~= '' then
+        cond[#cond + 1] = 'objet = ?'
+        params[#params + 1] = p.objet
+    end
+    if p.texte and p.texte ~= '' then
+        cond[#cond + 1] = 'raison LIKE ?'
+        params[#params + 1] = '%' .. pourLike(p.texte) .. '%'
+    end
+    if tonumber(p.depuis) then
+        cond[#cond + 1] = 'quand >= ?'
+        params[#params + 1] = math.floor(tonumber(p.depuis))
+    end
+    local ou = table.concat(cond, ' AND ')
+    local total = requete('SELECT COUNT(*) AS n FROM vesper_inventory_mouvements WHERE ' .. ou, params)[1]
+    local limite = math.max(1, math.min(1000, math.floor(tonumber(p.limite) or 15)))
+    local decalage = math.max(0, math.floor(tonumber(p.decalage) or 0))
+    local lignes = requete(('SELECT quand, identifiant, objet, quantite, solde, raison FROM vesper_inventory_mouvements WHERE %s ORDER BY quand DESC, id DESC LIMIT %d OFFSET %d')
+        :format(ou, limite, decalage), params)
+    local noms = {}
+    for _, l in ipairs(lignes) do
+        l.label = libelle(l.objet)
+        if noms[l.identifiant] == nil then noms[l.identifiant] = nomDe(l.identifiant) or false end
+        l.personnage = noms[l.identifiant] or nil
+    end
+    return { total = total and tonumber(total.n) or 0, lignes = lignes }
+end
+
 -- ── /inventaire objet ────────────────────────────────────────────────────
 
 --- Autocomplétion des objets : { label, valeur = nom }.
