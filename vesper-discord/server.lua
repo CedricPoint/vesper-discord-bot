@@ -224,6 +224,8 @@ local function etat(depuis)
         modules = VesperJournauxEtat and VesperJournauxEtat() or {},
         -- Le bot compare cette version à la dernière publiée (mises à jour).
         version = GetResourceMetadata(GetCurrentResourceName(), 'version', 0),
+        -- Lignes server.cfg qui manquent pour se mettre à jour seule (vide = prête).
+        droits_manquants = VesperDroitsMiseAJour and VesperDroitsMiseAJour() or {},
     }
 end
 
@@ -240,7 +242,27 @@ end
 
 local FICHIER_PERMIS = '^[%w_%-]+%.lua$'
 
+-- ⚠️ Une ressource n'a pas le droit de lancer `refresh` ni `restart` sans
+-- ACE dans server.cfg (« Access denied for command refresh »). Sans elles,
+-- les fichiers seraient écrits mais jamais chargés : on refuse AVANT.
+local function droitsManquants()
+    local principal = 'resource.' .. GetCurrentResourceName()
+    local manque = {}
+    for _, commande in ipairs({ 'refresh', 'restart' }) do
+        if not IsPrincipalAceAllowed(principal, 'command.' .. commande) then
+            manque[#manque + 1] = ('add_ace %s command.%s allow'):format(principal, commande)
+        end
+    end
+    return manque
+end
+VesperDroitsMiseAJour = droitsManquants
+
 function installerMiseAJour(donnees)
+    local manque = droitsManquants()
+    if #manque > 0 then
+        return false, ('la ressource n’a pas le droit de se recharger. Ajoutez dans server.cfg puis redémarrez le serveur : %s')
+            :format(table.concat(manque, ' / '))
+    end
     local fichiers = donnees.fichiers
     if type(fichiers) ~= 'table' or next(fichiers) == nil then return false, 'aucun fichier' end
     if not fichiers['fxmanifest.lua'] then return false, 'fxmanifest.lua manquant' end

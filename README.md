@@ -43,8 +43,12 @@ qui **s'installe, se règle et se met à jour tout seul**.
 3. **Dans `server.cfg`**, ajouter les deux lignes affichées :
    ```cfg
    set vesper_discord_jeton "…"
+   add_ace resource.vesper-discord command.refresh allow
+   add_ace resource.vesper-discord command.restart allow
    ensure vesper-discord
    ```
+   Les deux `add_ace` permettent à la ressource de se recharger seule quand
+   vous installez une mise à jour depuis Discord.
 4. **Inviter le bot** avec le lien affiché. Il adopte ce serveur Discord,
    crée ses salons et ses rôles.
 5. **Régler** depuis Discord avec `/config` : nom affiché, adresse F8,

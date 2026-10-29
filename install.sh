@@ -117,9 +117,12 @@ cat <<EOF
  1. Dans le server.cfg de FiveM :
 
       set vesper_discord_jeton "$JETON_PONT"
+      add_ace resource.vesper-discord command.refresh allow
+      add_ace resource.vesper-discord command.restart allow
       ensure vesper-discord
 
-    ⚠️ « set », jamais « sets » (un sets est public). Puis : refresh, ensure vesper-discord.
+    ⚠️ « set », jamais « sets » (un sets est public). Les deux add_ace laissent la
+    ressource se recharger seule lors des mises à jour. Puis redémarrez le serveur.
 
  2. Inviter le bot sur votre serveur Discord :
 

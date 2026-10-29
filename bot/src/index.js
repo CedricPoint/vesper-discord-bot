@@ -190,7 +190,10 @@ async function recuperer(chemin, options = {}) {
     signal: AbortSignal.timeout(6000),
   });
   if (!res.ok) {
-    const err = new Error(`HTTP ${res.status} sur ${chemin}`);
+    // La ressource explique ses refus (« erreur ») : on garde son message.
+    let detail = '';
+    try { detail = (await res.json()).erreur || ''; } catch { /* corps vide */ }
+    const err = new Error(detail ? `${detail} (HTTP ${res.status})` : `HTTP ${res.status} sur ${chemin}`);
     err.status = res.status;
     throw err;
   }
@@ -204,7 +207,7 @@ async function releve() {
     const d = await recuperer(`/vesper-discord/etat?depuis=${depuis}`);
     if (d.nom) nomFiveM = d.nom;
     return {
-      nom: d.nom, version: d.version || null,
+      nom: d.nom, version: d.version || null, droitsManquants: liste(d.droits_manquants),
       enLigne: true, complet: true, max: d.max, joueurs: d.joueurs || [],
       enLigneDepuis: d.en_ligne_depuis, ressources: d.ressources || [],
       evenements: d.evenements || [], dernier: d.dernier ?? 0,
@@ -893,6 +896,13 @@ function embedMaj(p, { lignes = [], couleur = COULEUR.marque, titre } = {}) {
       notes.length > 3000 ? `${notes.slice(0, 3000)}\n…` : notes,
       '',
       `Version installée : **${VERSION}**${dernier?.version ? ` · ressource FiveM **${dernier.version}**` : ''}`,
+      ...(dernier?.droitsManquants?.length ? [
+        '',
+        '⚠️ **La ressource FiveM ne peut pas encore se recharger seule.** Ajoutez dans server.cfg, puis redémarrez le serveur :',
+        '```',
+        ...dernier.droitsManquants,
+        '```',
+      ] : []),
       ...lignes,
     ].join('\n').slice(0, 4000))
     .setFooter({ text: 'Sauvegarde automatique avant installation · retour arrière si la nouvelle version plante' })

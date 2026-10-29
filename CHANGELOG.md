@@ -3,6 +3,15 @@
 Chaque section ci-dessous devient la note de la version publiée, affichée
 par le bot dans son salon 🆕・updates-bot.
 
+## [1.5.1]
+
+**Mises à jour plus sûres pour la ressource FiveM.**
+
+- La ressource vérifie qu'elle a le droit de se recharger **avant** d'écrire ses nouveaux fichiers. Sans les deux lignes `add_ace resource.vesper-discord command.refresh allow` et `… command.restart allow` dans `server.cfg`, l'installation s'arrête proprement au lieu de laisser une ressource à moitié mise à jour.
+- L'annonce d'une nouvelle version dans 🆕・updates-bot indique ces lignes s'il en manque.
+- Les refus de la ressource s'affichent avec leur vraie raison au lieu de « HTTP 400 ».
+- `install.sh` et la documentation donnent les deux lignes dès l'installation.
+
 ## [1.5.0]
 
 **Les journaux deviennent consultables : `/logs`.**
