@@ -3,6 +3,10 @@
 Chaque section ci-dessous devient la note de la version publiée, affichée
 par le bot dans son salon 🆕・updates-bot.
 
+## [1.6.1]
+
+- `/inventaire objet` et la recherche de `/inventaire coffre` trouvent de nouveau les noms qui contiennent un `_` (« water_bottle », « gang_ballas ») : ce caractère était retiré au lieu d'être protégé dans la requête.
+
 ## [1.6.0]
 
 **Coffres et objets : `/inventaire`.**

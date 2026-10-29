@@ -91,6 +91,11 @@ end
 
 local function plaque(p) return (tostring(p or ''):upper():gsub('^%s+', ''):gsub('%s+$', '')) end
 
+-- Un texte cherché par LIKE : % et _ y sont des jokers, on les échappe
+-- (\ est le caractère d'échappement par défaut de MySQL). Les retirer
+-- cassait la recherche de « water_bottle » ou de « gang_ballas ».
+local function pourLike(t) return (tostring(t or ''):gsub('[\\%%_]', '\\%0')) end
+
 local GENRES = {
     stash = { table = 'inventory_stash', col = 'stash', emoji = '🗄️', nom = 'Coffre' },
     trunk = { table = 'inventory_trunk', col = 'plate', emoji = '🚗', nom = 'Coffre de véhicule' },
@@ -104,7 +109,7 @@ function VesperInventaireRecherche(texte, max)
     max = max or 25
     texte = tostring(texte or ''):gsub('^%s+', ''):gsub('%s+$', '')
     local res, vus = {}, {}
-    local motif = '%' .. texte:gsub('[%%_]', '') .. '%'
+    local motif = '%' .. pourLike(texte) .. '%'
     local function ajouter(genre, id, extra)
         local valeur = genre .. ':' .. id
         if vus[valeur] or #res >= max then return end
@@ -225,7 +230,7 @@ function VesperInventaireObjet(nom)
     end
 
     -- Le texte JSON contient "name":"<nom>" : un filtre SQL grossier, puis le compte exact.
-    local motif = '%"' .. nom:gsub('[%%_"\\]', '') .. '"%'
+    local motif = '%"' .. pourLike((nom:gsub('"', ''))) .. '"%'
     if aLaTable('users') then
         for _, u in ipairs(requete('SELECT identifier, firstname, lastname, inventory FROM users WHERE inventory LIKE ? LIMIT 500', { motif })) do
             if not enLigne[u.identifier] then
