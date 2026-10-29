@@ -17,7 +17,7 @@ qui **s'installe, se règle et se met à jour tout seul**.
 - **Logs exploitables** : `/logs` retrouve en quelques secondes tout ce que
   les scripts ont journalisé sur un joueur, un script ou un mot-clé, avec
   lien vers le message d'origine et export en fichier.
-- **Commandes** : `/statut`, `/joueurs`, `/connexion`, `/id`, `/logs`, `/update`,
+- **Commandes** : `/statut`, `/joueurs`, `/connexion`, `/id`, `/logs`, `/inventaire`, `/update`,
   `/annonce-jeu`, `/maintenance`, `/journaux`, `/config`, `/maj`, `/installer`.
 - **Journaux des scripts** : un script compatible se déclare, le bot crée sa
   catégorie « LOGS — … », ses salons et ses webhooks

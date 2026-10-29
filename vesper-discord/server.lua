@@ -365,6 +365,26 @@ SetHttpHandler(function(req, res)
         return
     end
 
+    -- Inventaires (/inventaire) : coffres et objets, SQL aussi.
+    if req.method == 'GET' and chemin:find('^/inventaire/') then
+        local q = parametre(req.path or '', 'q')
+        local fonctions = {
+            ['/inventaire/coffre'] = VesperInventaireCoffre,
+            ['/inventaire/objet'] = VesperInventaireObjet,
+            ['/inventaire/recherche-coffre'] = function(t) return { resultats = VesperInventaireRecherche(t, 25) } end,
+            ['/inventaire/recherche-objet'] = function(t) return { resultats = VesperInventaireObjets(t, 25) } end,
+        }
+        local f = fonctions[chemin]
+        if not f then return repondre(404, { erreur = 'inconnu' }) end
+        CreateThread(function()
+            local ok, corps, raison = pcall(f, q)
+            if not ok then return repondre(500, { erreur = tostring(corps) }) end
+            if corps == nil then return repondre(404, { erreur = raison or 'introuvable' }) end
+            repondre(200, corps)
+        end)
+        return
+    end
+
     -- Historique des journaux (/logs) : SQL aussi, donc dans un fil à part.
     if req.method == 'GET' and (chemin == '/historique' or chemin == '/historique/resume') then
         local p = {}

@@ -17,6 +17,7 @@
 7. [La fiche joueur : `/id`](#7-la-fiche-joueur--id)
 8. [Le salon `📋・logs-joueurs`](#8-le-salon-logs-joueurs)
 8 bis. [Retrouver un journal : `/logs`](#8-bis-retrouver-un-journal--logs)
+8 ter. [Coffres et objets : `/inventaire`](#8-ter-coffres-et-objets--inventaire)
 9. [Le panneau de statut](#9-le-panneau-de-statut)
 10. [Les journaux des scripts](#10-les-journaux-des-scripts)
 11. [Mises à jour](#11-mises-à-jour)
@@ -205,6 +206,7 @@ lance la commande.
 | `/connexion` | tous | Comment rejoindre le serveur. |
 | `/id joueur:<…>` | staff | **Fiche complète d'un joueur** (privée), § 7. Bouton **📜 Logs de ce joueur**. |
 | `/logs joueur` · `script` · `recherche` | staff | **Retrouver les journaux** d'un joueur, d'un script, ou par mot-clé (privée), § 8 bis. |
+| `/inventaire coffre` · `objet` | staff | **Contenu d'un coffre** (coffre, coffre de véhicule, boîte à gants) et **qui détient un objet** (privée), § 8 ter. |
 | `/update [notifier]` | staff | Formulaire de mise à jour publié dans `📢・mises-à-jour`. Une ligne = une puce. |
 | `/annonce-jeu message:<…>` | staff | Écrit dans le tchat **en jeu** de tous les joueurs (400 caractères). Tracé. |
 | `/maintenance activer [raison]` / `terminer` | staff | Passe le panneau en 🟠 maintenance, ou l'en sort. |
@@ -306,6 +308,27 @@ trouvable par script, salon et texte.
 plus anciens sont effacés toutes les 6 heures. Tables
 `vesper_discord_journaux` et `vesper_discord_journaux_joueurs`, créées
 toutes seules au démarrage de la ressource.
+
+## 8 ter. Coffres et objets : `/inventaire`
+
+Pour un litige (« on m'a vidé mon coffre ») ou une duplication. Les deux
+commandes lisent les tables de qs-inventory, que gardent aussi ses
+remplaçants (`users.inventory`, `inventory_stash`, `inventory_trunk`,
+`inventory_glovebox`) : une table absente est simplement sautée.
+
+| Commande | Ce qu'elle montre |
+|---|---|
+| `/inventaire coffre recherche:…` | Le contenu d'un **coffre**, d'un **coffre de véhicule** ou d'une **boîte à gants**. Pour un véhicule : son **propriétaire** (personnage et identifiant), et l'autre compartiment (boîte à gants ou coffre) en plus. La recherche propose plaques et noms de coffres, et les véhicules possédés dont le coffre n'a jamais servi. |
+| `/inventaire objet objet:…` | **Qui détient cet objet, et combien** : personnages connectés (lus **en direct**), personnages hors ligne, coffres, coffres de véhicule, boîtes à gants. Le total en circulation, puis les 40 plus gros détenteurs. |
+
+- Bouton **📜 Historique de ce coffre** (ou **Logs de cet objet**) : la
+  recherche `/logs` sur la plaque, le nom du coffre ou le nom de l'objet.
+  Avec vesper-inventory 1.5.0 ou plus, chaque ouverture d'un coffre y figure
+  (qui, durée, ce qui a été pris et déposé, propriétaire du véhicule).
+- Un coffre se lit **en base** : l'inventaire l'y écrit une seconde après
+  chaque changement. Les poches d'un joueur connecté se lisent en direct
+  (`exports['qs-inventory']:GetInventory`).
+- Réponses privées ; chaque consultation est tracée dans `🤖・journal-bot`.
 
 ## 9. Le panneau de statut
 
@@ -452,6 +475,9 @@ Sans le bon jeton ou hors de la machine : `403`.
 | `GET /fiche?q=…` | la fiche, `{ candidats }` si ambigu, ou `404` |
 | `GET /historique?licence=&ressource=&sujet=&texte=&depuis=&limite=&decalage=&complet=` | `{ total, lignes: [{ id, quand, ressource, sujet, titre, texte, salon, message }] }` (500 au plus) |
 | `GET /historique/resume?licence=…` | `{ sujets: [{ ressource, sujet, n, premier, dernier }], conservation }` |
+| `GET /inventaire/coffre?q=trunk:PLAQUE` (ou `glovebox:`, `stash:`, ou texte libre) | `{ genre, nom, id, existe, objets: [{ objet, label, quantite }], proprietaire?, modele?, autre? }`, `{ candidats }` si ambigu, ou `404` |
+| `GET /inventaire/objet?q=nom` | `{ objet, label, total, nombre, detenteurs: [{ genre, id?, nom?, identifier?, en_ligne?, quantite }] }` (40 au plus) |
+| `GET /inventaire/recherche-coffre?q=` · `/inventaire/recherche-objet?q=` | `{ resultats: [{ label, valeur }] }` (autocomplétion) |
 | `POST /annonce` | `{ message, auteur }` → tchat en jeu |
 | `POST /webhooks` | `{ id, webhooks }` : webhooks d'un script, envoyés par le bot |
 | `POST /maj` | `{ version, fichiers: { "nom.lua": contenu } }` : vérifie, sauvegarde, écrit, `refresh`, redémarre |

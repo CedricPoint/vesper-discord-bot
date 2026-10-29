@@ -3,6 +3,15 @@
 Chaque section ci-dessous devient la note de la version publiée, affichée
 par le bot dans son salon 🆕・updates-bot.
 
+## [1.6.0]
+
+**Coffres et objets : `/inventaire`.**
+
+- 🗄️ **`/inventaire coffre`** : le contenu d'un coffre, d'un coffre de véhicule ou d'une boîte à gants, avec le propriétaire du véhicule. La recherche propose les plaques et les noms de coffres.
+- 📦 **`/inventaire objet`** : qui détient un objet, et combien. Les joueurs connectés sont lus en direct, puis viennent les personnages hors ligne, les coffres et les véhicules. C'est l'outil pour repérer une duplication.
+- 📜 Bouton **Historique de ce coffre** (ou **Logs de cet objet**) : la recherche `/logs` sur la plaque, le coffre ou l'objet.
+- La ressource FiveM passe en 1.5.0 (nouveau fichier `inventaire.lua`) et se met à jour avec le bot.
+
 ## [1.5.2]
 
 - La ressource annonce la version du code **réellement chargé** : un `refresh` relit le manifeste sans recharger le code, et l'installation pouvait se croire terminée alors que l'ancien code tournait encore.

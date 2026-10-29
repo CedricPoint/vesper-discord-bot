@@ -1226,6 +1226,120 @@ async function choixLogs(interaction) {
   return [];
 }
 
+// ── Inventaires (/inventaire) ────────────────────────────────────────────
+
+const GENRES_DETENTEUR = { joueur: '👤', stash: '🗄️', trunk: '🚗', glovebox: '🧤' };
+
+function lignesObjets(objets) {
+  return liste(objets).map((o) => `• **${echapper(o.label || o.objet, 60)}** ×${o.quantite}`);
+}
+
+function embedCoffre(c) {
+  const e = new EmbedBuilder().setColor(COULEUR.marque)
+    .setTitle(`${c.emoji} ${c.nom} · ${c.id}`.slice(0, 256))
+    .setFooter({ text: 'État enregistré en base (une seconde après chaque changement)' });
+  if (c.proprietaire) {
+    e.addFields({ name: 'Propriétaire', value: `${c.proprietaire.nom ? `**${echapper(c.proprietaire.nom)}**\n` : ''}\`${c.proprietaire.identifier}\``, inline: true });
+  } else if (c.genre !== 'stash') {
+    e.addFields({ name: 'Propriétaire', value: 'aucun (véhicule non enregistré)', inline: true });
+  }
+  if (c.modele) e.addFields({ name: 'Modèle', value: `\`${String(c.modele).replace(/`/g, "'").slice(0, 40)}\``, inline: true });
+  const objets = liste(c.objets);
+  e.addFields({
+    name: `Contenu (${objets.length} objet${objets.length > 1 ? 's' : ''})`,
+    value: c.existe === false ? 'jamais ouvert' : champ(lignesObjets(objets), 'vide'),
+    inline: false,
+  });
+  if (c.autre) {
+    const a = liste(c.autre.objets);
+    e.addFields({ name: `${c.autre.emoji} ${c.autre.nom} (${a.length})`, value: champ(lignesObjets(a), 'vide'), inline: false });
+  }
+  return e;
+}
+
+function embedObjet(o) {
+  const lignes = liste(o.detenteurs).map((d) => {
+    const ico = GENRES_DETENTEUR[d.genre] || '•';
+    if (d.genre === 'joueur') {
+      return `${ico} **${echapper(d.nom || '?', 40)}**${d.en_ligne ? ` 🟢 #${d.id}` : ''} — ×${d.quantite}${d.identifier ? ` · \`${d.identifier}\`` : ''}`;
+    }
+    return `${ico} \`${String(d.id).replace(/`/g, "'").slice(0, 40)}\` — ×${d.quantite}`;
+  });
+  // La description tient 4000 caractères : on coupe proprement.
+  let corps = '';
+  let coupe = 0;
+  for (let i = 0; i < lignes.length; i += 1) {
+    if (corps.length + lignes[i].length + 1 > 3500) { coupe = lignes.length - i; break; }
+    corps += (corps ? '\n' : '') + lignes[i];
+  }
+  if (coupe) corps += `\n… et ${coupe} de plus`;
+  const montres = liste(o.detenteurs).length;
+  return new EmbedBuilder().setColor(COULEUR.marque)
+    .setTitle(`📦 ${o.label} (${o.objet})`.slice(0, 256))
+    .setDescription([
+      `**${o.total}** en circulation, chez **${o.nombre}** détenteur${o.nombre > 1 ? 's' : ''}.`,
+      '👤 personnage · 🟢 connecté (lu en direct) · 🗄️ coffre · 🚗 coffre de véhicule · 🧤 boîte à gants',
+      '',
+      corps || 'Personne ne possède cet objet.',
+    ].join('\n'))
+    .setFooter({ text: o.nombre > montres ? `Les ${montres} plus gros détenteurs` : 'Du plus gros détenteur au plus petit' });
+}
+
+function boutonHistorique(texte, libelle) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`vinv:hist:${String(texte).slice(0, 80)}`).setStyle(ButtonStyle.Secondary)
+      .setLabel(libelle).setEmoji('📜'),
+  );
+}
+
+async function commandeInventaire(interaction) {
+  if (!estStaff(interaction)) return interaction.reply({ content: 'Réservé au staff.', ephemeral: true });
+  const sous = interaction.options.getSubcommand();
+  await interaction.deferReply({ ephemeral: true });
+  const q = sous === 'coffre' ? interaction.options.getString('recherche', true) : interaction.options.getString('objet', true);
+  let r;
+  try {
+    r = await recuperer(`/vesper-discord/inventaire/${sous}?q=${encodeURIComponent(q)}`);
+  } catch (err) {
+    if (err.status === 404) return interaction.editReply(`❌ ${err.message.replace(/ \(HTTP 404\)$/, '')}.`);
+    return interaction.editReply(`❌ Le serveur n’a pas répondu (${err.message}). La ressource vesper-discord est-elle en version 1.5.0 ou plus ?`);
+  }
+  if (r.candidats) {
+    const c = liste(r.candidats);
+    return interaction.editReply(c.length
+      ? `Plusieurs résultats, choisissez dans la liste proposée :\n${c.slice(0, 10).map((x) => `• ${x.label}`).join('\n')}`.slice(0, 1900)
+      : '❌ Rien trouvé.');
+  }
+  if (sous === 'coffre') {
+    await journal(`🗄️ <@${interaction.user.id}> a consulté ${r.nom.toLowerCase()} \`${r.id}\`.`);
+    return interaction.editReply({ embeds: [embedCoffre(r)], components: [boutonHistorique(r.id, 'Historique de ce coffre')], allowedMentions: { parse: [] } });
+  }
+  await journal(`📦 <@${interaction.user.id}> a cherché qui détient **${echapper(r.label)}** (\`${r.objet}\`).`);
+  return interaction.editReply({ embeds: [embedObjet(r)], components: [boutonHistorique(r.label, 'Logs de cet objet')], allowedMentions: { parse: [] } });
+}
+
+async function choixInventaire(interaction) {
+  const focus = interaction.options.getFocused(true);
+  const chemin = focus.name === 'recherche' ? 'recherche-coffre' : 'recherche-objet';
+  try {
+    const r = await recuperer(`/vesper-discord/inventaire/${chemin}?q=${encodeURIComponent(focus.value || '')}`);
+    return liste(r.resultats).map((x) => ({ name: String(x.label).slice(0, 100), value: String(x.valeur).slice(0, 100) }));
+  } catch { return []; }
+}
+
+// Bouton « Historique » : la recherche /logs sur la plaque, le coffre ou l'objet.
+async function boutonInventaire(interaction) {
+  const texte = interaction.customId.slice('vinv:hist:'.length);
+  const cle = nouvelleRequete({ texte }, `Historique de « ${texte} »`);
+  await interaction.deferReply({ ephemeral: true });
+  await journal(`📜 <@${interaction.user.id}> a consulté l’historique de « ${echapper(texte)} ».`);
+  try {
+    return interaction.editReply(await pageLogs(cle));
+  } catch (err) {
+    return interaction.editReply(`❌ Historique indisponible (${err.message}).`);
+  }
+}
+
 // ── Réglages depuis Discord (/config) ────────────────────────────────────
 
 function lireServices(texte) {
@@ -1362,6 +1476,14 @@ const COMMANDES = [
     .addStringOption((o) => o.setName('joueur')
       .setDescription('Licence, id en jeu, nom du personnage, pseudo FiveM ou compte Discord')
       .setRequired(true).setAutocomplete(true).setMaxLength(100)),
+  new SlashCommandBuilder().setName('inventaire').setDescription('Contenu d’un coffre, ou qui détient un objet')
+    .setDefaultMemberPermissions(STAFF)
+    .addSubcommand((s) => s.setName('coffre').setDescription('Coffre, coffre de véhicule ou boîte à gants : contenu et propriétaire')
+      .addStringOption((o) => o.setName('recherche').setDescription('Plaque ou nom du coffre')
+        .setRequired(true).setAutocomplete(true).setMaxLength(100)))
+    .addSubcommand((s) => s.setName('objet').setDescription('Qui détient cet objet, et combien (repérer une duplication)')
+      .addStringOption((o) => o.setName('objet').setDescription('Nom ou libellé de l’objet')
+        .setRequired(true).setAutocomplete(true).setMaxLength(100))),
   new SlashCommandBuilder().setName('journaux').setDescription('Scripts reliés au bot et leurs salons de journaux')
     .setDefaultMemberPermissions(STAFF)
     .addBooleanOption((o) => o.setName('resynchroniser')
@@ -1546,6 +1668,15 @@ async function surInteraction(interaction) {
     return boutonLogs(interaction);
   }
 
+  if (interaction.isAutocomplete() && interaction.commandName === 'inventaire') {
+    if (!estStaff(interaction)) return interaction.respond([]).catch(() => {});
+    return interaction.respond(await choixInventaire(interaction)).catch(() => {});
+  }
+  if (interaction.isButton() && interaction.customId.startsWith('vinv:hist:')) {
+    if (!estStaff(interaction)) return interaction.reply({ content: 'Réservé au staff.', ephemeral: true });
+    return boutonInventaire(interaction);
+  }
+
   if (interaction.isAutocomplete() && interaction.commandName === 'id') {
     if (!estStaff(interaction)) return interaction.respond([]).catch(() => {});
     const tape = interaction.options.getFocused();
@@ -1714,6 +1845,7 @@ async function surInteraction(interaction) {
   }
 
   if (cmd === 'logs') return commandeLogs(interaction);
+  if (cmd === 'inventaire') return commandeInventaire(interaction);
 
   if (cmd === 'annonce-jeu') {
     const message = interaction.options.getString('message', true);
@@ -1928,5 +2060,5 @@ if (require.main === module) {
     process.exit(1);
   });
 } else {
-  module.exports = { embedsFiche, embedEvenement };
+  module.exports = { embedsFiche, embedEvenement, embedCoffre, embedObjet };
 }
