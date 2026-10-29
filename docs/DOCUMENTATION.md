@@ -373,11 +373,30 @@ le bouton redevient cliquable.
 `.env`, `data/` (réglages, salons, webhooks, sauvegardes) et `lanceur.js`
 tant qu'il n'a pas changé.
 
-### Première installation d'une ressource sans `/maj`
+### Vous aviez installé une version plus ancienne
 
-Les ressources antérieures à la 1.3.0 ne savent pas se mettre à jour
-seules : copiez une fois `vesper-discord/` à la main, puis `refresh` et
-`restart vesper-discord`. Ensuite, tout passe par le bouton.
+À faire **une seule fois**, selon la version de départ :
+
+| Vous avez | À faire avant de cliquer sur « Installer » |
+|---|---|
+| Ressource **avant 1.3.0** (pas de `/maj`) | Copier `vesper-discord/` à la main, puis `refresh` et `restart vesper-discord`. |
+| Ressource **avant 1.4.2** | Ajouter au `server.cfg` les quatre lignes ci-dessous, puis les taper aussi dans la console (ou redémarrer le serveur). |
+| Bot installé à la main, service lancé par `node src/index.js` | Remplacer le fichier du service par `bot/deploy/vesper-discord-bot.service` (il lance `lanceur.js`, indispensable au retour arrière), puis `systemctl daemon-reload` et `systemctl restart vesper-discord-bot` — ou relancer simplement `install.sh`. |
+
+```cfg
+add_ace resource.vesper-discord command.refresh allow
+add_ace resource.vesper-discord command.restart allow
+add_ace resource.vesper-discord command.stop allow
+add_ace resource.vesper-discord command.start allow
+```
+
+Vérifier dans la console : `test_ace resource.vesper-discord command.stop`
+doit répondre `= true`. Pourquoi quatre : `refresh` relit les fichiers,
+`restart` recharge le code, et `restart` relance lui-même `stop` puis
+`start`. Avec seulement `refresh`, la ressource lit sa nouvelle version
+mais continue d'exécuter l'ancien code.
+
+Ensuite, tout passe par le bouton **Installer**.
 
 ## 12. Cohabiter avec d'autres bots
 

@@ -62,6 +62,11 @@ Rien à faire : le bot vérifie toutes les 6 heures et annonce la nouvelle
 version dans `🆕・updates-bot`. Un administrateur clique sur **Installer**.
 `/maj verifier` force la vérification.
 
+**Installé avant la 1.5.2 ?** Ajoutez une fois les quatre lignes `add_ace`
+ci-dessus à votre `server.cfg` (et tapez-les dans la console), sinon la
+ressource ne peut pas se recharger seule : détails dans
+[la documentation, § 11](docs/DOCUMENTATION.md#11-mises-à-jour).
+
 ## Ce qui ne sera jamais dans ce dépôt
 
 Le `.env` (jeton du bot, jeton du pont), `data/` (réglages, salons,
