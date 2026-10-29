@@ -1,6 +1,6 @@
 # Bot VESPER — documentation
 
-> Bot **1.4.0** · ressource FiveM **`vesper-discord` 1.3.0** · licence MIT.
+> Bot **1.5.0** · ressource FiveM **`vesper-discord` 1.4.0** · licence MIT.
 > Brancher un script sur les salons de journaux : [`journaux.md`](journaux.md).
 > Ce qui change d'une version à l'autre : [`../CHANGELOG.md`](../CHANGELOG.md).
 
@@ -16,6 +16,7 @@
 6. [Commandes](#6-commandes)
 7. [La fiche joueur : `/id`](#7-la-fiche-joueur--id)
 8. [Le salon `📋・logs-joueurs`](#8-le-salon-logs-joueurs)
+8 bis. [Retrouver un journal : `/logs`](#8-bis-retrouver-un-journal--logs)
 9. [Le panneau de statut](#9-le-panneau-de-statut)
 10. [Les journaux des scripts](#10-les-journaux-des-scripts)
 11. [Mises à jour](#11-mises-à-jour)
@@ -194,7 +195,8 @@ lance la commande.
 | `/statut` | tous | Affiche le panneau d'état. |
 | `/joueurs` | tous | Joueurs en ville (privée). Le staff voit en plus personnage, métier, ping et compte Discord. |
 | `/connexion` | tous | Comment rejoindre le serveur. |
-| `/id joueur:<…>` | staff | **Fiche complète d'un joueur** (privée), § 7. |
+| `/id joueur:<…>` | staff | **Fiche complète d'un joueur** (privée), § 7. Bouton **📜 Logs de ce joueur**. |
+| `/logs joueur` · `script` · `recherche` | staff | **Retrouver les journaux** d'un joueur, d'un script, ou par mot-clé (privée), § 8 bis. |
 | `/update [notifier]` | staff | Formulaire de mise à jour publié dans `📢・mises-à-jour`. Une ligne = une puce. |
 | `/annonce-jeu message:<…>` | staff | Écrit dans le tchat **en jeu** de tous les joueurs (400 caractères). Tracé. |
 | `/maintenance activer [raison]` / `terminer` | staff | Passe le panneau en 🟠 maintenance, ou l'en sort. |
@@ -262,6 +264,40 @@ d'écran : la fiche montre l'argent et l'inventaire.
 - La mort est signalée par le jeu du joueur (`esx:onPlayerDeath`) : fiable
   pour un journal, pas une preuve. Limitée à une toutes les 10 s par joueur.
 - Décalage de 15 s au plus ; rien n'est perdu entre deux relevés.
+
+## 8 bis. Retrouver un journal : `/logs`
+
+Tout journal envoyé sur Discord par un script (et tout événement de
+`📋・logs-joueurs`) est **aussi rangé en base** par la ressource, rattaché
+aux joueurs qu'il cite et au message Discord d'origine. Le staff le retrouve
+sans fouiller cent salons.
+
+| Commande | Ce qu'elle montre |
+|---|---|
+| `/logs joueur joueur:… [script] [periode] [texte]` | Tout ce qui a été journalisé sur ce joueur, tous scripts confondus, et un résumé **« où apparaît ce joueur »** (nombre de journaux et dernier en date, script par script). |
+| `/logs script script:… [sujet] [periode] [texte]` | Les derniers journaux d'un script, ou d'un seul de ses salons. |
+| `/logs recherche texte:… [script] [periode]` | Un mot, une plaque, un montant, un nom, dans tous les journaux. |
+
+- Résultats du plus récent au plus ancien, 8 par page (◀️ ▶️), chacun avec
+  un lien **voir le message** vers le journal d'origine.
+- **📄 Exporter en fichier** : les 500 journaux les plus récents de la
+  recherche, en texte, pour un dossier de sanction ou un rapport.
+- Sur la fiche `/id`, le bouton **📜 Logs de ce joueur** ouvre la même vue.
+- Réponses privées ; chaque consultation et exportation est tracée dans
+  `🤖・journal-bot`.
+
+**Comment un journal est rattaché à un joueur.** Les scripts écrivent déjà
+qui est concerné : identifiant du personnage (`char0:…`), licence
+(`license:…`), ou id en jeu entre accents graves (`` `#12` ``, traduit en
+licence si le joueur est connecté). La ressource en tire la licence : **aucun
+script n'a besoin d'être modifié**. Un journal qui ne cite personne reste
+trouvable par script, salon et texte.
+
+**Conservation.** 30 jours par défaut, réglable dans `server.cfg` :
+`set vesper_discord_historique_jours 60` (0 = sans limite). Les journaux
+plus anciens sont effacés toutes les 6 heures. Tables
+`vesper_discord_journaux` et `vesper_discord_journaux_joueurs`, créées
+toutes seules au démarrage de la ressource.
 
 ## 9. Le panneau de statut
 
@@ -380,6 +416,8 @@ Sans le bon jeton ou hors de la machine : `403`.
 | `GET /etat?depuis=N` | `nom`, `version`, `max`, `en_ligne_depuis`, `ressources[]`, `joueurs[]`, `evenements[]` (après `N`), `dernier`, `modules[]` |
 | `GET /recherche?q=…` | `{ resultats: [{ label, valeur }] }`, 25 au plus |
 | `GET /fiche?q=…` | la fiche, `{ candidats }` si ambigu, ou `404` |
+| `GET /historique?licence=&ressource=&sujet=&texte=&depuis=&limite=&decalage=&complet=` | `{ total, lignes: [{ id, quand, ressource, sujet, titre, texte, salon, message }] }` (500 au plus) |
+| `GET /historique/resume?licence=…` | `{ sujets: [{ ressource, sujet, n, premier, dernier }], conservation }` |
 | `POST /annonce` | `{ message, auteur }` → tchat en jeu |
 | `POST /webhooks` | `{ id, webhooks }` : webhooks d'un script, envoyés par le bot |
 | `POST /maj` | `{ version, fichiers: { "nom.lua": contenu } }` : vérifie, sauvegarde, écrit, `refresh`, redémarre |

@@ -3,6 +3,18 @@
 Chaque section ci-dessous devient la note de la version publiée, affichée
 par le bot dans son salon 🆕・updates-bot.
 
+## [1.5.0]
+
+**Les journaux deviennent consultables : `/logs`.**
+
+- 📜 **`/logs joueur`** : tout ce que les scripts ont journalisé sur un joueur, du plus récent au plus ancien, avec un résumé « où apparaît ce joueur » (script par script). Filtres : script, période, texte.
+- 🔎 **`/logs recherche`** : un mot, une plaque, un montant, dans tous les journaux de tous les scripts.
+- 🗂️ **`/logs script`** : les derniers journaux d'un script, ou d'un seul de ses salons.
+- Chaque résultat a un lien **voir le message** vers le journal d'origine dans son salon, et un bouton **Exporter en fichier** (500 journaux au plus).
+- Bouton **📜 Logs de ce joueur** directement sur la fiche `/id`.
+- Toutes les consultations et exportations sont tracées dans 🤖・journal-bot.
+- Ressource FiveM 1.4.0 : chaque journal envoyé est aussi rangé en base (table `vesper_discord_journaux`), rattaché aux joueurs qu'il cite — **aucun script n'a besoin d'être modifié**. Conservation : 30 jours (`set vesper_discord_historique_jours`).
+
 ## [1.4.0]
 
 **Mises à jour en un clic et installation pour n'importe quel serveur.**

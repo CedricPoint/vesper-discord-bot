@@ -14,7 +14,10 @@ qui **s'installe, se règle et se met à jour tout seul**.
 - **Staff** : salon `📋・logs-joueurs` (connexions, départs, personnages,
   métiers, morts, redémarrages) et **fiche complète d'un joueur avec `/id`**
   (argent, inventaire, véhicules, propriétés, casier…).
-- **Commandes** : `/statut`, `/joueurs`, `/connexion`, `/id`, `/update`,
+- **Logs exploitables** : `/logs` retrouve en quelques secondes tout ce que
+  les scripts ont journalisé sur un joueur, un script ou un mot-clé, avec
+  lien vers le message d'origine et export en fichier.
+- **Commandes** : `/statut`, `/joueurs`, `/connexion`, `/id`, `/logs`, `/update`,
   `/annonce-jeu`, `/maintenance`, `/journaux`, `/config`, `/maj`, `/installer`.
 - **Journaux des scripts** : un script compatible se déclare, le bot crée sa
   catégorie « LOGS — … », ses salons et ses webhooks

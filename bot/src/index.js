@@ -16,8 +16,9 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const {
-  ActionRowBuilder, ActivityType, ButtonBuilder, ButtonStyle, ChannelType,
+  ActionRowBuilder, ActivityType, AttachmentBuilder, ButtonBuilder, ButtonStyle, ChannelType,
   Client, EmbedBuilder, Events, GatewayIntentBits, ModalBuilder,
   PermissionFlagsBits, REST, Routes, SlashCommandBuilder, TextInputBuilder,
   TextInputStyle,
@@ -1017,6 +1018,204 @@ async function annoncerBilanMaj() {
   }
 }
 
+// ── Historique des journaux (/logs) ──────────────────────────────────────
+//
+// La ressource range en base chaque journal envoyé (historique.lua), rattaché
+// aux joueurs qu'il cite et au message Discord d'origine. Ici on l'interroge.
+
+const PERIODES = { '1h': 3600, '24h': 86400, '7j': 7 * 86400, '30j': 30 * 86400 };
+const CHOIX_PERIODES = [
+  { name: 'Dernière heure', value: '1h' }, { name: '24 dernières heures', value: '24h' },
+  { name: '7 derniers jours', value: '7j' }, { name: '30 derniers jours', value: '30j' },
+];
+const PAR_PAGE = 8;
+const requetesLogs = new Map(); // clé → { params, titre, page, expire }
+
+function sourceDuLog(ressource, sujet) {
+  if (ressource === 'vesper-discord') return { texte: '📋 Logs joueurs', salon: etat.salons.connexions };
+  const m = modulesPresents.find((x) => x.id === ressource);
+  const s = m?.salons?.find((x) => x.cle === sujet);
+  const titre = m?.titre || etat.modules?.[ressource]?.titre || ressource;
+  return {
+    texte: `${s?.emoji || m?.emoji || '📁'} ${titre} · ${s?.nom || sujet}`,
+    salon: etat.modules?.[ressource]?.salons?.[sujet]?.salon,
+  };
+}
+
+function lienDuLog(l) {
+  if (l.message && l.salon) return `https://discord.com/channels/${CFG.guildId}/${l.salon}/${l.message}`;
+  return null;
+}
+
+function parametresLogs(p) {
+  return Object.entries(p).filter(([, v]) => v != null && v !== '')
+    .map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+}
+
+// Un joueur tapé en clair → sa licence (ou la liste des joueurs possibles).
+async function licenceDuJoueur(texte) {
+  const t = String(texte || '').trim();
+  const m = t.match(/^(?:license:|char\d+:)?([0-9a-f]{40})$/i);
+  if (m) return { licence: `license:${m[1].toLowerCase()}`, nom: null };
+  const r = await recuperer(`/vesper-discord/recherche?q=${encodeURIComponent(t)}`);
+  const res = liste(r.resultats);
+  if (res.length === 1) return { licence: res[0].valeur, nom: res[0].label };
+  return { candidats: res };
+}
+
+async function pageLogs(cle) {
+  const q = requetesLogs.get(cle);
+  const r = await recuperer(`/vesper-discord/historique?${parametresLogs({ ...q.params, limite: PAR_PAGE, decalage: q.page * PAR_PAGE })}`);
+  const pages = Math.max(1, Math.ceil((r.total || 0) / PAR_PAGE));
+  const lignes = liste(r.lignes).map((l) => {
+    const src = sourceDuLog(l.ressource, l.sujet);
+    const lien = lienDuLog(l);
+    // Le titre est déjà en tête du texte rangé : on ne le répète pas.
+    let texte = String(l.texte || '');
+    if (l.titre && texte.startsWith(l.titre)) texte = texte.slice(l.titre.length);
+    texte = texte.replace(/\s+/g, ' ').trim();
+    return [
+      `${ts(l.quand, 'd')} ${ts(l.quand, 't')} · ${src.texte}${lien ? ` · [voir le message](${lien})` : (src.salon ? ` · <#${src.salon}>` : '')}`,
+      `**${echapper(l.titre || 'Journal', 90)}**${texte ? ` — ${echapper(texte, 220)}` : ''}`,
+    ].join('\n');
+  });
+  const embeds = [new EmbedBuilder().setColor(COULEUR.marque)
+    .setTitle(`📜 ${q.titre}`.slice(0, 256))
+    .setDescription(lignes.length ? lignes.join('\n\n').slice(0, 4000) : 'Aucun journal ne correspond.')
+    .setFooter({ text: `Page ${q.page + 1} / ${pages} · ${r.total || 0} journal(aux) · du plus récent au plus ancien` })];
+
+  // Pour un joueur, en première page : de quoi parlent ses journaux.
+  if (q.params.licence && q.page === 0 && r.total) {
+    const resume = await recuperer(`/vesper-discord/historique/resume?${parametresLogs(q.params)}`).catch(() => null);
+    const sujets = liste(resume?.sujets);
+    if (sujets.length) {
+      embeds.push(new EmbedBuilder().setColor(COULEUR.info).setTitle('Où apparaît ce joueur')
+        .setDescription(sujets.slice(0, 15).map((s) => `${sourceDuLog(s.ressource, s.sujet).texte} — **${s.n}** · dernier ${ts(s.dernier)}`).join('\n').slice(0, 4000))
+        .setFooter({ text: resume.conservation > 0 ? `Journaux conservés ${resume.conservation} jours` : 'Journaux conservés sans limite' }));
+    }
+  }
+
+  const rangee = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`vlog:prec:${cle}`).setEmoji('◀️').setStyle(ButtonStyle.Secondary).setDisabled(q.page === 0),
+    new ButtonBuilder().setCustomId(`vlog:suiv:${cle}`).setEmoji('▶️').setStyle(ButtonStyle.Secondary).setDisabled(q.page + 1 >= pages),
+    new ButtonBuilder().setCustomId(`vlog:export:${cle}`).setLabel('Exporter en fichier').setEmoji('📄')
+      .setStyle(ButtonStyle.Primary).setDisabled(!r.total),
+  );
+  return { embeds, components: [rangee], allowedMentions: { parse: [] } };
+}
+
+function nouvelleRequete(params, titre) {
+  const maintenant_ = Date.now();
+  for (const [k, v] of requetesLogs) if (v.expire < maintenant_) requetesLogs.delete(k);
+  const cle = crypto.randomBytes(5).toString('hex');
+  requetesLogs.set(cle, { params, titre, page: 0, expire: maintenant_ + 30 * 60 * 1000 });
+  return cle;
+}
+
+async function exporterLogs(interaction, cle) {
+  const q = requetesLogs.get(cle);
+  await interaction.deferReply({ ephemeral: true });
+  const r = await recuperer(`/vesper-discord/historique?${parametresLogs({ ...q.params, limite: 500, complet: 1 })}`);
+  const blocs = liste(r.lignes).map((l) => [
+    `[${new Date(l.quand * 1000).toLocaleString('fr-FR', { timeZone: 'Europe/Paris' })}] ${sourceDuLog(l.ressource, l.sujet).texte}`,
+    String(l.texte || '').trim(),
+    lienDuLog(l) || '',
+  ].filter(Boolean).join('\n'));
+  const entete = `${q.titre}\n${r.total} journal(aux)${r.total > 500 ? ', les 500 plus récents' : ''} — exporté le ${new Date().toLocaleString('fr-FR', { timeZone: 'Europe/Paris' })}\n${'═'.repeat(60)}\n\n`;
+  const fichier = new AttachmentBuilder(Buffer.from(entete + blocs.join(`\n\n${'─'.repeat(60)}\n\n`), 'utf8'), { name: `logs-${cle}.txt` });
+  await journal(`📄 <@${interaction.user.id}> a exporté ${Math.min(r.total, 500)} journal(aux) : ${q.titre}.`);
+  return interaction.editReply({ content: `📄 ${Math.min(r.total, 500)} journal(aux).`, files: [fichier] });
+}
+
+async function boutonLogs(interaction) {
+  const [, action, arg] = interaction.customId.split(':');
+  if (action === 'joueur') {
+    // Depuis la fiche /id.
+    const cle = nouvelleRequete({ licence: `license:${arg}` }, `Logs de ${interaction.message?.embeds?.[0]?.title?.replace(/^🪪\s*/, '') || arg.slice(0, 10)}`);
+    await interaction.deferReply({ ephemeral: true });
+    await journal(`📜 <@${interaction.user.id}> a consulté les logs de \`license:${arg}\`.`);
+    return interaction.editReply(await pageLogs(cle));
+  }
+  const q = requetesLogs.get(arg);
+  if (!q) return interaction.reply({ content: 'Cette recherche a expiré : relancez /logs.', ephemeral: true });
+  if (action === 'export') return exporterLogs(interaction, arg);
+  q.page = Math.max(0, q.page + (action === 'suiv' ? 1 : -1));
+  q.expire = Date.now() + 30 * 60 * 1000;
+  await interaction.deferUpdate();
+  return interaction.editReply(await pageLogs(arg));
+}
+
+async function commandeLogs(interaction) {
+  if (!estStaff(interaction)) return interaction.reply({ content: 'Réservé au staff.', ephemeral: true });
+  const sous = interaction.options.getSubcommand();
+  const periode = interaction.options.getString('periode');
+  const params = {
+    ressource: interaction.options.getString('script') || undefined,
+    sujet: sous === 'script' ? interaction.options.getString('sujet') || undefined : undefined,
+    texte: interaction.options.getString('texte') || undefined,
+    depuis: periode ? maintenant() - PERIODES[periode] : undefined,
+  };
+  await interaction.deferReply({ ephemeral: true });
+
+  const morceaux = [];
+  if (sous === 'joueur') {
+    let j;
+    try {
+      j = await licenceDuJoueur(interaction.options.getString('joueur', true));
+    } catch (err) {
+      return interaction.editReply(`❌ Le serveur n’a pas répondu (${err.message}).`);
+    }
+    if (j.candidats) {
+      return interaction.editReply(j.candidats.length
+        ? `Plusieurs joueurs correspondent, choisissez dans la liste proposée :\n${j.candidats.slice(0, 10).map((x) => `• ${x.label}`).join('\n')}`
+        : '❌ Aucun joueur trouvé.');
+    }
+    params.licence = j.licence;
+    morceaux.push(`Logs de ${j.nom ? j.nom.replace(/^[🟢⚫🔑]\s*/u, '') : j.licence}`);
+  } else if (sous === 'script') {
+    morceaux.push(`Logs — ${params.ressource ? sourceDuLog(params.ressource, params.sujet || '').texte.replace(/ · $/, '') : ''}`);
+  } else {
+    morceaux.push(`Recherche « ${params.texte} »`);
+  }
+  if (sous !== 'script' && params.ressource) morceaux.push(`dans ${params.ressource}`);
+  if (sous !== 'recherche' && params.texte) morceaux.push(`contenant « ${params.texte} »`);
+  if (periode) morceaux.push(`(${CHOIX_PERIODES.find((c) => c.value === periode).name.toLowerCase()})`);
+
+  const cle = nouvelleRequete(params, morceaux.join(' '));
+  try {
+    const page = await pageLogs(cle);
+    await journal(`📜 <@${interaction.user.id}> : ${morceaux.join(' ')}.`);
+    return interaction.editReply(page);
+  } catch (err) {
+    return interaction.editReply(`❌ Historique indisponible (${err.message}). La ressource vesper-discord est-elle en version 1.4.0 ou plus ?`);
+  }
+}
+
+// Autocomplétion de /logs : joueurs, scripts, sujets du script choisi.
+async function choixLogs(interaction) {
+  const champ = interaction.options.getFocused(true);
+  const tape = String(champ.value || '').toLowerCase();
+  if (champ.name === 'joueur') {
+    try {
+      const r = await recuperer(`/vesper-discord/recherche?q=${encodeURIComponent(champ.value || '')}`);
+      return liste(r.resultats).map((x) => ({ name: x.label, value: x.valeur }));
+    } catch { return []; }
+  }
+  if (champ.name === 'script') {
+    const ids = new Set(['vesper-discord', ...Object.keys(etat.modules || {})]);
+    return [...ids].map((id) => ({ name: (id === 'vesper-discord' ? '📋 Logs joueurs (connexions, morts, métiers…)' : `${sourceDuLog(id, '').texte.replace(/ · $/, '')} (${id})`).slice(0, 100), value: id }))
+      .filter((c) => c.name.toLowerCase().includes(tape)).slice(0, 25);
+  }
+  if (champ.name === 'sujet') {
+    const id = interaction.options.getString('script');
+    const m = modulesPresents.find((x) => x.id === id);
+    const sujets = m?.salons?.map((s) => ({ cle: s.cle, nom: `${s.emoji} ${s.nom}` }))
+      || Object.keys(etat.modules?.[id]?.salons || {}).map((cle) => ({ cle, nom: cle }));
+    return sujets.map((s) => ({ name: s.nom.slice(0, 100), value: s.cle })).filter((c) => c.name.toLowerCase().includes(tape)).slice(0, 25);
+  }
+  return [];
+}
+
 // ── Réglages depuis Discord (/config) ────────────────────────────────────
 
 function lireServices(texte) {
@@ -1131,6 +1330,23 @@ const COMMANDES = [
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addSubcommand((s) => s.setName('verifier').setDescription('Chercher tout de suite une nouvelle version'))
     .addSubcommand((s) => s.setName('etat').setDescription('Versions installées et dernière version publiée')),
+  new SlashCommandBuilder().setName('logs').setDescription('Retrouver les journaux : d’un joueur, d’un script, ou par mot-clé')
+    .setDefaultMemberPermissions(STAFF)
+    .addSubcommand((s) => s.setName('joueur').setDescription('Derniers logs d’un joueur, tous scripts confondus')
+      .addStringOption((o) => o.setName('joueur').setDescription('Id en jeu, personnage, pseudo, licence…')
+        .setRequired(true).setAutocomplete(true).setMaxLength(100))
+      .addStringOption((o) => o.setName('script').setDescription('Seulement ce script').setAutocomplete(true))
+      .addStringOption((o) => o.setName('periode').setDescription('Depuis').addChoices(...CHOIX_PERIODES))
+      .addStringOption((o) => o.setName('texte').setDescription('Contenant ce texte (plaque, objet, montant…)').setMaxLength(80)))
+    .addSubcommand((s) => s.setName('script').setDescription('Derniers logs d’un script ou d’un de ses salons')
+      .addStringOption((o) => o.setName('script').setDescription('Le script').setRequired(true).setAutocomplete(true))
+      .addStringOption((o) => o.setName('sujet').setDescription('Un seul de ses salons').setAutocomplete(true))
+      .addStringOption((o) => o.setName('periode').setDescription('Depuis').addChoices(...CHOIX_PERIODES))
+      .addStringOption((o) => o.setName('texte').setDescription('Contenant ce texte').setMaxLength(80)))
+    .addSubcommand((s) => s.setName('recherche').setDescription('Chercher un mot, une plaque, un montant dans tous les logs')
+      .addStringOption((o) => o.setName('texte').setDescription('Ce qu’on cherche').setRequired(true).setMinLength(2).setMaxLength(80))
+      .addStringOption((o) => o.setName('script').setDescription('Seulement ce script').setAutocomplete(true))
+      .addStringOption((o) => o.setName('periode').setDescription('Depuis').addChoices(...CHOIX_PERIODES))),
   new SlashCommandBuilder().setName('id').setDescription('Fiche d’un joueur : personnages, argent, inventaire, véhicules, propriétés…')
     .setDefaultMemberPermissions(STAFF)
     .addStringOption((o) => o.setName('joueur')
@@ -1311,6 +1527,15 @@ async function surInteraction(interaction) {
 
   // Seuls les scripts absents sont proposés : on ne retire pas les
   // journaux d'un script qui tourne (il les recréerait au relevé suivant).
+  if (interaction.isAutocomplete() && interaction.commandName === 'logs') {
+    if (!estStaff(interaction)) return interaction.respond([]).catch(() => {});
+    return interaction.respond(await choixLogs(interaction)).catch(() => {});
+  }
+  if (interaction.isButton() && interaction.customId.startsWith('vlog:')) {
+    if (!estStaff(interaction)) return interaction.reply({ content: 'Réservé au staff.', ephemeral: true });
+    return boutonLogs(interaction);
+  }
+
   if (interaction.isAutocomplete() && interaction.commandName === 'id') {
     if (!estStaff(interaction)) return interaction.respond([]).catch(() => {});
     const tape = interaction.options.getFocused();
@@ -1461,7 +1686,15 @@ async function surInteraction(interaction) {
         : '❌ Aucun joueur trouvé.');
     }
     const [premier, ...suite] = embedsFiche(fiche);
-    await interaction.editReply({ embeds: premier, allowedMentions: { parse: [] } });
+    const hachage = String(fiche.licence || '').split(':').pop();
+    await interaction.editReply({
+      embeds: premier,
+      components: [new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`vlog:joueur:${hachage}`).setStyle(ButtonStyle.Secondary)
+          .setLabel('Logs de ce joueur').setEmoji('📜'),
+      )],
+      allowedMentions: { parse: [] },
+    });
     for (const lot of suite) {
       await interaction.followUp({ embeds: lot, ephemeral: true, allowedMentions: { parse: [] } });
     }
@@ -1469,6 +1702,8 @@ async function surInteraction(interaction) {
     await journal(`🔎 <@${interaction.user.id}> a consulté la fiche de **${echapper(fiche.pseudo || fiche.licence)}** (\`${fiche.licence}\`).`);
     return;
   }
+
+  if (cmd === 'logs') return commandeLogs(interaction);
 
   if (cmd === 'annonce-jeu') {
     const message = interaction.options.getString('message', true);

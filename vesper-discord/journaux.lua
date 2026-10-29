@@ -102,14 +102,16 @@ end)
 --  L'envoi
 -- ══════════════════════════════════════════════════════════════════════
 
-local function pousser(id, sujet, url, embed)
+-- Chaque élément de file est une ENTRÉE { e = embed, id = id en base } :
+-- l'id sert à accrocher le message Discord à l'historique (historique.lua).
+local function pousser(id, sujet, url, entree)
     local f = files[url]
     if not f then
         f = { embeds = {}, prochain = 0, enVol = false, id = id, sujet = sujet }
         files[url] = f
     end
     if #f.embeds >= MAX_FILE then table.remove(f.embeds, 1) end
-    f.embeds[#f.embeds + 1] = embed
+    f.embeds[#f.embeds + 1] = entree
 end
 
 --- @return boolean pris en charge (sinon le script se rabat sur ses webhooks)
@@ -118,9 +120,13 @@ exports('journal', function(_, sujet, embed)
     local m = id and modules[id]
     if not m or type(embed) ~= 'table' or type(sujet) ~= 'string' then return false end
 
+    local entree = { e = embed }
+    -- Rangé en base même si Discord ne le reçoit jamais.
+    if VesperHistoriqueEnregistrer then VesperHistoriqueEnregistrer(id, sujet, embed, nil, entree) end
+
     local url = webhooks[id] and webhooks[id][sujet]
     if urlValide(url) then
-        pousser(id, sujet, url, embed)
+        pousser(id, sujet, url, entree)
         return true
     end
     -- Le bot ne s'est pas manifesté : il ne viendra peut-être jamais.
@@ -128,7 +134,7 @@ exports('journal', function(_, sujet, embed)
     local k = id .. '|' .. sujet
     attente[k] = attente[k] or {}
     if #attente[k] >= MAX_ATTENTE then table.remove(attente[k], 1) end
-    attente[k][#attente[k] + 1] = embed
+    attente[k][#attente[k] + 1] = entree
     return true
 end)
 
@@ -137,7 +143,7 @@ end)
 local function lot(f)
     local pris, taille = {}, 0
     while #f.embeds > 0 and #pris < 10 do
-        local t = #json.encode(f.embeds[1])
+        local t = #json.encode(f.embeds[1].e)
         if #pris > 0 and taille + t > 5500 then break end
         pris[#pris + 1] = table.remove(f.embeds, 1)
         taille = taille + t
@@ -166,8 +172,12 @@ CreateThread(function()
             if not f.enVol and #f.embeds > 0 and maintenant >= f.prochain then
                 local envoi = lot(f)
                 local m = modules[f.id]
+                local embeds = {}
+                for i, entree in ipairs(envoi) do embeds[i] = entree.e end
                 f.enVol = true
-                PerformHttpRequest(url, function(code, corps, entetes)
+                -- ?wait=true : Discord rend le message posté, dont on garde
+                -- l'adresse pour le lien « voir le message » de /logs.
+                PerformHttpRequest(url .. '?wait=true', function(code, corps, entetes)
                     f.enVol = false
                     if code == 429 then
                         -- On remet le lot en tête et on attend ce que Discord demande.
@@ -184,12 +194,17 @@ CreateThread(function()
                         if code < 200 or code >= 300 then
                             print(('[vesper-discord] journal %s/%s refusé par Discord (%s)')
                                 :format(f.id, f.sujet, tostring(code)))
+                        elseif VesperHistoriqueMessage then
+                            local ok, d = pcall(json.decode, corps or '')
+                            if ok and type(d) == 'table' and d.id and d.channel_id then
+                                VesperHistoriqueMessage(envoi, tostring(d.channel_id), tostring(d.id))
+                            end
                         end
                         f.prochain = GetGameTimer() + PAUSE_ENTRE_ENVOIS
                     end
                 end, 'POST', json.encode({
                     username = ((m and m.titre) or f.id) .. ' — journaux',
-                    embeds = envoi,
+                    embeds = embeds,
                     allowed_mentions = { parse = {} },
                 }), { ['Content-Type'] = 'application/json' })
             end

@@ -15,6 +15,8 @@
 ---   GET  /etat?depuis=N   état complet + événements numérotés après N
 ---   GET  /fiche?q=…       fiche complète d'un joueur (fiche.lua, commande /id)
 ---   GET  /recherche?q=…   joueurs correspondants (autocomplétion de /id)
+---   GET  /historique?…    journaux rangés en base (historique.lua, commande /logs)
+---   GET  /historique/resume?…  nombre de journaux par script et sujet
 ---   POST /annonce         {"message": "...", "auteur": "..."} → tchat en jeu
 ---   POST /maj             {"version": "...", "fichiers": {nom: contenu}} → se met à jour
 ---   POST /webhooks        {"id": "ressource", "webhooks": {sujet: url}} → journaux
@@ -41,12 +43,37 @@ local evenements = {}
 local numero = 0
 local MAX_EVENEMENTS = 200
 
+-- Ce que l'historique (/logs) garde d'un événement du salon logs-joueurs.
+local TITRES = { arrivee = 'Connexion', personnage = 'Personnage chargé', metier = 'Changement de métier',
+    mort = 'Mort', depart = 'Déconnexion' }
+
+local function historiser(evt)
+    if not VesperHistoriqueEnregistrer then return end
+    local j = evt.joueur or {}
+    local lignes = { ('%s (`#%s`)'):format(tostring(j.nom or '?'), tostring(j.id or '?')) }
+    if j.personnage then lignes[#lignes + 1] = 'Personnage : ' .. j.personnage end
+    if j.metier_label then lignes[#lignes + 1] = ('Métier : %s (%s)'):format(j.metier_label, tostring(j.grade or '?')) end
+    if evt.type == 'personnage' and evt.nouveau then lignes[#lignes + 1] = 'Nouveau personnage' end
+    if evt.type == 'metier' then lignes[#lignes + 1] = ('%s → %s'):format(tostring(evt.avant or '?'), tostring(evt.apres)) end
+    if evt.tueur then lignes[#lignes + 1] = ('Tué par %s (`#%s`)'):format(tostring(evt.tueur.nom), tostring(evt.tueur.id)) end
+    if evt.cause then lignes[#lignes + 1] = 'Cause : ' .. evt.cause end
+    if evt.raison then lignes[#lignes + 1] = 'Raison : ' .. tostring(evt.raison) end
+    if j.duree then lignes[#lignes + 1] = ('Session : %d min'):format(math.floor(j.duree / 60)) end
+    if j.liquide or j.banque then
+        lignes[#lignes + 1] = ('Argent : %s liquide, %s banque'):format(tostring(j.liquide or '?'), tostring(j.banque or '?'))
+    end
+    VesperHistoriqueEnregistrer('vesper-discord', 'joueurs',
+        { title = TITRES[evt.type] or evt.type, description = table.concat(lignes, '\n') },
+        { j.licence, evt.tueur and evt.tueur.licence })
+end
+
 local function noter(evt)
     numero = numero + 1
     evt.n = numero
     evt.t = os.time()
     evenements[#evenements + 1] = evt
     if #evenements > MAX_EVENEMENTS then table.remove(evenements, 1) end
+    pcall(historiser, evt)
 end
 
 local function infoJoueur(src)
@@ -302,6 +329,23 @@ SetHttpHandler(function(req, res)
             end
             if not ok then return repondre(500, { erreur = tostring(corps) }) end
             if corps == nil then return repondre(404, { erreur = raison or 'introuvable' }) end
+            repondre(200, corps)
+        end)
+        return
+    end
+
+    -- Historique des journaux (/logs) : SQL aussi, donc dans un fil à part.
+    if req.method == 'GET' and (chemin == '/historique' or chemin == '/historique/resume') then
+        local p = {}
+        for _, cle in ipairs({ 'licence', 'ressource', 'sujet', 'texte', 'depuis', 'limite', 'decalage', 'complet' }) do
+            local v = parametre(req.path or '', cle)
+            if v ~= '' then p[cle] = v end
+        end
+        CreateThread(function()
+            local f = chemin == '/historique' and VesperHistoriqueChercher or VesperHistoriqueResume
+            local ok, corps, raison = pcall(f, p)
+            if not ok then return repondre(500, { erreur = tostring(corps) }) end
+            if corps == nil then return repondre(503, { erreur = raison or 'indisponible' }) end
             repondre(200, corps)
         end)
         return
