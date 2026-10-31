@@ -18,6 +18,7 @@
 8. [Le salon `📋・logs-joueurs`](#8-le-salon-logs-joueurs)
 8 bis. [Retrouver un journal : `/logs`](#8-bis-retrouver-un-journal--logs)
 8 ter. [Coffres et objets : `/inventaire`](#8-ter-coffres-et-objets--inventaire)
+8 quater. [Supprimer un personnage : `/wipe`](#8-quater-supprimer-un-personnage--wipe)
 9. [Le panneau de statut](#9-le-panneau-de-statut)
 10. [Les journaux des scripts](#10-les-journaux-des-scripts)
 11. [Mises à jour](#11-mises-à-jour)
@@ -207,6 +208,7 @@ lance la commande.
 | `/id joueur:<…>` | staff | **Fiche complète d'un joueur** (privée), § 7. Bouton **📜 Logs de ce joueur**. |
 | `/logs joueur` · `script` · `recherche` | staff | **Retrouver les journaux** d'un joueur, d'un script, ou par mot-clé (privée), § 8 bis. |
 | `/inventaire coffre` · `objet` · `historique` | staff | **Contenu d'un coffre** (coffre, coffre de véhicule, boîte à gants), **qui détient un objet**, et **chaque objet gagné ou perdu par un joueur** (privée), § 8 ter. |
+| `/wipe joueur:<…> [personnage]` | administrateurs | **Supprimer un personnage** d'un joueur, avec liste et confirmation (privée), § 8 quater. Il faut vesper-personnages. |
 | `/update [notifier]` | staff | Formulaire de mise à jour publié dans `📢・mises-à-jour`. Une ligne = une puce. |
 | `/annonce-jeu message:<…>` | staff | Écrit dans le tchat **en jeu** de tous les joueurs (400 caractères). Tracé. |
 | `/maintenance activer [raison]` / `terminer` | staff | Passe le panneau en 🟠 maintenance, ou l'en sort. |
@@ -337,6 +339,32 @@ remplaçants (`users.inventory`, `inventory_stash`, `inventory_trunk`,
   le script *nom* »). Avec un autre inventaire, la commande répond que
   l'historique n'existe pas sur ce serveur.
 - Réponses privées ; chaque consultation est tracée dans `🤖・journal-bot`.
+
+## 8 quater. Supprimer un personnage : `/wipe`
+
+Réservé aux **administrateurs** du serveur Discord (permission
+« Administrateur »). Quand les joueurs ne peuvent pas supprimer eux-mêmes un
+personnage (`Config.SuppressionPersonnage = false` dans vesper-personnages),
+c'est la voie pour le faire à leur place. Il faut **vesper-personnages 1.4.0
+ou plus** sur le serveur.
+
+1. `/wipe joueur:…` : licence (la plus sûre), id en jeu, pseudo ou nom de
+   personnage, avec la même autocomplétion que `/id`.
+2. Le bot affiche **tous les personnages** de la licence (numéro, nom,
+   métier, 🟢 s'il est en jeu) avec un bouton par personnage. Un joueur a
+   souvent plusieurs personnages : **rien n'est jamais deviné**.
+3. Un clic (ou `personnage:N` dans la commande) affiche la **confirmation**,
+   avec le nom et la licence ; **🗑️ Supprimer** efface le personnage.
+
+- Si le joueur joue ce personnage, il est **expulsé d'abord**, puis la
+  suppression attend sa déconnexion (15 s au plus).
+- Tout ce qui est rattaché au personnage est effacé (vesper-personnages
+  balaie chaque table qui le référence). **Impossible à annuler.**
+- Chaque suppression, réussie ou non, est tracée dans `🤖・journal-bot`, et
+  dans la console du serveur.
+- En jeu ou en console, la même chose : `/wipe <id ou licence>` (liste) puis
+  `/wipe <id ou licence> <n°>`, réservé au fondateur et au superadmin
+  (`Config.Administration` de vesper-personnages).
 
 ## 9. Le panneau de statut
 
@@ -487,6 +515,8 @@ Sans le bon jeton ou hors de la machine : `403`.
 | `GET /inventaire/objet?q=nom` | `{ objet, label, total, nombre, detenteurs: [{ genre, id?, nom?, identifier?, en_ligne?, quantite }] }` (40 au plus) |
 | `GET /inventaire/recherche-coffre?q=` · `/inventaire/recherche-objet?q=` | `{ resultats: [{ label, valeur }] }` (autocomplétion) |
 | `GET /inventaire/historique?licence=&objet=&texte=&depuis=&limite=&decalage=` | `{ total, lignes: [{ quand, identifiant, personnage?, objet, label, quantite, solde, raison }] }` (1000 au plus), ou `404` sans vesper-inventory 1.6.0 |
+| `GET /personnages?q=…` | `{ licence, personnages: [{ numero, prenom, nom, metier, grade, enJeu }] }`, `{ candidats }` si ambigu, `404`, ou `503` sans vesper-personnages |
+| `POST /wipe` | `{ licence, numero, auteur }` → `{ ok, message, personnage }` ; refus en `400` avec `erreur` |
 | `POST /annonce` | `{ message, auteur }` → tchat en jeu |
 | `POST /webhooks` | `{ id, webhooks }` : webhooks d'un script, envoyés par le bot |
 | `POST /maj` | `{ version, fichiers: { "nom.lua": contenu } }` : vérifie, sauvegarde, écrit, `refresh`, redémarre |

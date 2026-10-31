@@ -453,5 +453,27 @@ SetHttpHandler(function(req, res)
         return
     end
 
+    -- /wipe : personnages d'une licence et suppression (vesper-personnages).
+    if req.method == 'GET' and chemin == '/personnages' then
+        local q = parametre(req.path or '', 'q')
+        CreateThread(function()
+            local ok, err = pcall(VesperPersonnagesListe, q, repondre)
+            if not ok then repondre(500, { erreur = tostring(err) }) end
+        end)
+        return
+    end
+
+    if req.method == 'POST' and chemin == '/wipe' then
+        req.setDataHandler(function(brut)
+            local ok, donnees = pcall(json.decode, brut)
+            if not ok or type(donnees) ~= 'table' then return repondre(400, { erreur = 'json' }) end
+            CreateThread(function()
+                local ok2, err = pcall(VesperPersonnagesWipe, donnees, repondre)
+                if not ok2 then repondre(500, { erreur = tostring(err) }) end
+            end)
+        end)
+        return
+    end
+
     repondre(404, { erreur = 'inconnu' })
 end)

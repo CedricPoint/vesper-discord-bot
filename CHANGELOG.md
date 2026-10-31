@@ -3,6 +3,14 @@
 Chaque section ci-dessous devient la note de la version publiée, affichée
 par le bot dans son salon 🆕・updates-bot.
 
+## [1.8.0]
+
+**Supprimer un personnage depuis Discord : `/wipe`.**
+
+- 🗑️ **`/wipe joueur:…`** (administrateurs du serveur Discord) : la liste de **tous les personnages** de la licence, un bouton par personnage, puis une **confirmation** avant d'effacer. Rien n'est deviné quand le joueur a plusieurs personnages.
+- Si le joueur joue ce personnage, il est expulsé d'abord. Chaque suppression est tracée dans 🤖・journal-bot.
+- Il faut **vesper-personnages 1.4.0 ou plus**, qui fait la suppression. La ressource FiveM passe en 1.7.0 (nouveau fichier `personnages.lua`).
+
 ## [1.7.0]
 
 **Historique des objets d'un joueur : `/inventaire historique`.**

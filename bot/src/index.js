@@ -184,10 +184,11 @@ const maintenant = () => Math.floor(Date.now() / 1000);
 // ── Relevé du serveur FiveM ──────────────────────────────────────────────
 
 async function recuperer(chemin, options = {}) {
+  const { delai = 6000, ...reste } = options;
   const res = await fetch(CFG.fivem + chemin, {
-    ...options,
-    headers: { 'X-Vesper-Jeton': CFG.jeton, 'Content-Type': 'application/json', ...(options.headers || {}) },
-    signal: AbortSignal.timeout(6000),
+    ...reste,
+    headers: { 'X-Vesper-Jeton': CFG.jeton, 'Content-Type': 'application/json', ...(reste.headers || {}) },
+    signal: AbortSignal.timeout(delai),
   });
   if (!res.ok) {
     // La ressource explique ses refus (« erreur ») : on garde son message.
@@ -1437,6 +1438,129 @@ async function boutonInventaire(interaction) {
   }
 }
 
+// ── Suppression d'un personnage (/wipe) ──────────────────────────────────
+// Réservé aux administrateurs du serveur Discord (fondateur, superadmin).
+// Une licence a souvent plusieurs personnages : on montre la liste, on fait
+// choisir, puis on fait CONFIRMER. Le travail est fait par vesper-personnages,
+// qui expulse le joueur s'il joue ce personnage.
+
+const DELAI_WIPE = 30 * 1000;
+
+function estAdminDiscord(interaction) {
+  return Boolean(interaction.memberPermissions?.has(PermissionFlagsBits.Administrator));
+}
+
+const nomPerso = (p) => `${p.prenom || '?'} ${p.nom || '?'}`;
+
+function lignePerso(p) {
+  const metier = p.metier ? ` — ${echapper(p.metier, 40)}${p.grade ? ` (${echapper(p.grade, 30)})` : ''}` : '';
+  return `**${p.numero}** · ${echapper(nomPerso(p))}${metier}${p.enJeu ? ' · 🟢 en jeu' : ''}`;
+}
+
+async function listePersonnages(q) {
+  return recuperer(`/vesper-discord/personnages?q=${encodeURIComponent(q)}`);
+}
+
+// L'écran de confirmation pour un personnage précis.
+function confirmationWipe(licence, p) {
+  return {
+    content: [
+      `⚠️ Supprimer **définitivement** le personnage **${p.numero} · ${echapper(nomPerso(p))}** ?`,
+      `Licence : \`${licence}\``,
+      p.enJeu ? '🟢 Il est en jeu sur ce personnage : il sera expulsé d’abord.' : '',
+      'Inventaire, véhicules, logements, comptes… tout ce qui est rattaché à ce personnage est effacé. **Impossible à annuler.**',
+    ].filter(Boolean).join('\n'),
+    components: [new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`vwipe:ok:${p.numero}:${licence}`).setStyle(ButtonStyle.Danger)
+        .setLabel(`Supprimer ${nomPerso(p)}`.slice(0, 80)).setEmoji('🗑️'),
+      new ButtonBuilder().setCustomId('vwipe:non').setStyle(ButtonStyle.Secondary).setLabel('Annuler'),
+    )],
+    allowedMentions: { parse: [] },
+  };
+}
+
+// La liste des personnages, un bouton par personnage.
+function choixWipe(licence, persos) {
+  const rangees = [];
+  for (let i = 0; i < Math.min(persos.length, 20); i += 5) {
+    rangees.push(new ActionRowBuilder().addComponents(persos.slice(i, i + 5).map((p) =>
+      new ButtonBuilder().setCustomId(`vwipe:choisir:${p.numero}:${licence}`).setStyle(ButtonStyle.Secondary)
+        .setLabel(`${p.numero} · ${nomPerso(p)}`.slice(0, 80)))));
+  }
+  return {
+    content: [`**${persos.length}** personnage(s) pour \`${licence}\` — lequel supprimer ?`, ...persos.map(lignePerso)].join('\n').slice(0, 1900),
+    components: rangees,
+    allowedMentions: { parse: [] },
+  };
+}
+
+async function commandeWipe(interaction) {
+  if (!estAdminDiscord(interaction)) {
+    return interaction.reply({ content: 'Réservé aux administrateurs du serveur.', ephemeral: true });
+  }
+  const recherche = interaction.options.getString('joueur', true);
+  const numero = interaction.options.getInteger('personnage');
+  await interaction.deferReply({ ephemeral: true });
+  let r;
+  try {
+    r = await listePersonnages(recherche);
+  } catch (err) {
+    return interaction.editReply(`❌ ${err.status === 404 ? 'Aucun joueur trouvé.' : `Le serveur n’a pas répondu (${err.message}).`}`);
+  }
+  if (r.candidats) {
+    const c = liste(r.candidats);
+    return interaction.editReply(`Plusieurs joueurs correspondent, précisez (la licence est la plus sûre) :\n${c.map((x) => `• ${x.label} — \`${x.valeur}\``).join('\n')}`.slice(0, 1900));
+  }
+  const persos = liste(r.personnages);
+  const licence = `license:${String(r.licence).split(':').pop()}`;
+  if (!persos.length) return interaction.editReply(`Aucun personnage pour \`${licence}\`.`);
+  if (numero) {
+    const p = persos.find((x) => x.numero === numero);
+    if (!p) return interaction.editReply({ ...choixWipe(licence, persos), content: `❌ Pas de personnage n° ${numero}.\n${choixWipe(licence, persos).content}` });
+    return interaction.editReply(confirmationWipe(licence, p));
+  }
+  return interaction.editReply(choixWipe(licence, persos));
+}
+
+async function boutonWipe(interaction) {
+  if (!estAdminDiscord(interaction)) {
+    return interaction.reply({ content: 'Réservé aux administrateurs du serveur.', ephemeral: true });
+  }
+  if (interaction.customId === 'vwipe:non') {
+    return interaction.update({ content: 'Suppression annulée.', components: [] });
+  }
+  const [, action, num, ...reste] = interaction.customId.split(':');
+  const numero = Number(num);
+  const licence = reste.join(':');
+  if (action === 'choisir') {
+    await interaction.deferUpdate();
+    let r;
+    try {
+      r = await listePersonnages(licence);
+    } catch (err) {
+      return interaction.editReply({ content: `❌ Le serveur n’a pas répondu (${err.message}).`, components: [] });
+    }
+    const p = liste(r.personnages).find((x) => x.numero === numero);
+    if (!p) return interaction.editReply({ content: `❌ Ce personnage n’existe plus.`, components: [] });
+    return interaction.editReply(confirmationWipe(licence, p));
+  }
+  if (action !== 'ok') return;
+  await interaction.update({ content: `⏳ Suppression du personnage n° ${numero}…`, components: [] });
+  let r;
+  try {
+    r = await recuperer('/vesper-discord/wipe', {
+      method: 'POST', delai: DELAI_WIPE,
+      body: JSON.stringify({ licence, numero, auteur: interaction.user.tag || interaction.user.username }),
+    });
+  } catch (err) {
+    await journal(`🗑️ <@${interaction.user.id}> : échec de la suppression du personnage n° ${numero} de \`${licence}\` (${echapper(err.message, 200)}).`);
+    return interaction.editReply(`❌ ${err.message}`);
+  }
+  const p = r.personnage || { numero };
+  await journal(`🗑️ <@${interaction.user.id}> a supprimé le personnage **${p.numero} · ${echapper(nomPerso(p))}** de \`${licence}\`.`);
+  return interaction.editReply(`✅ ${r.message || 'Personnage supprimé.'}`);
+}
+
 // ── Réglages depuis Discord (/config) ────────────────────────────────────
 
 function lireServices(texte) {
@@ -1587,6 +1711,12 @@ const COMMANDES = [
       .addStringOption((o) => o.setName('objet').setDescription('Seulement cet objet').setAutocomplete(true).setMaxLength(100))
       .addStringOption((o) => o.setName('periode').setDescription('Depuis').addChoices(...CHOIX_PERIODES))
       .addStringOption((o) => o.setName('raison').setDescription('Raison contenant ce texte (donné, coffre, plaque, script…)').setMaxLength(80))),
+  new SlashCommandBuilder().setName('wipe').setDescription('Supprimer un personnage d’un joueur (administrateurs)')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addStringOption((o) => o.setName('joueur').setDescription('Licence, id en jeu, personnage, pseudo…')
+      .setRequired(true).setAutocomplete(true).setMaxLength(100))
+    .addIntegerOption((o) => o.setName('personnage').setDescription('N° du personnage (sinon la liste s’affiche)')
+      .setMinValue(1).setMaxValue(20)),
   new SlashCommandBuilder().setName('journaux').setDescription('Scripts reliés au bot et leurs salons de journaux')
     .setDefaultMemberPermissions(STAFF)
     .addBooleanOption((o) => o.setName('resynchroniser')
@@ -1784,8 +1914,11 @@ async function surInteraction(interaction) {
     return boutonInventaire(interaction);
   }
 
-  if (interaction.isAutocomplete() && interaction.commandName === 'id') {
+  if (interaction.isButton() && interaction.customId.startsWith('vwipe:')) return boutonWipe(interaction);
+
+  if (interaction.isAutocomplete() && (interaction.commandName === 'id' || interaction.commandName === 'wipe')) {
     if (!estStaff(interaction)) return interaction.respond([]).catch(() => {});
+    if (interaction.commandName === 'wipe' && !estAdminDiscord(interaction)) return interaction.respond([]).catch(() => {});
     const tape = interaction.options.getFocused();
     try {
       const r = await recuperer(`/vesper-discord/recherche?q=${encodeURIComponent(tape)}`);
@@ -1953,6 +2086,7 @@ async function surInteraction(interaction) {
 
   if (cmd === 'logs') return commandeLogs(interaction);
   if (cmd === 'inventaire') return commandeInventaire(interaction);
+  if (cmd === 'wipe') return commandeWipe(interaction);
 
   if (cmd === 'annonce-jeu') {
     const message = interaction.options.getString('message', true);
