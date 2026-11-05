@@ -68,12 +68,15 @@ local function migrer()
                 requete(('DROP TABLE `%s`'):format(nouveau))
                 n = nil
             end
+            local renommee = false
             if a == 'BASE TABLE' and not n then
                 requete(('RENAME TABLE `%s` TO `%s`'):format(ancien, nouveau))
                 print(('^2[%s]^7 table %s renommée en %s'):format(RES, ancien, nouveau))
-                a, n = nil, 'BASE TABLE'
+                a, n, renommee = nil, 'BASE TABLE', true
             end
-            if VUES and not a and n == 'BASE TABLE' then
+            -- La vue n'existe que pour un serveur qui MIGRE (d'autres scripts y lisent encore
+            -- l'ancien nom). Une base neuve n'a aucun ancien nom.
+            if VUES and renommee then
                 requete(('CREATE OR REPLACE VIEW `%s` AS SELECT * FROM `%s`'):format(ancien, nouveau))
             elseif a == 'BASE TABLE' and n == 'BASE TABLE' then
                 print(('^3[%s]^7 %s et %s existent toutes les deux avec des données : rien n\'est déplacé, vérifiez à la main.'):format(RES, ancien, nouveau))
