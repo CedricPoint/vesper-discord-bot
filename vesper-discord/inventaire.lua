@@ -97,9 +97,9 @@ local function plaque(p) return (tostring(p or ''):upper():gsub('^%s+', ''):gsub
 local function pourLike(t) return (tostring(t or ''):gsub('[\\%%_]', '\\%0')) end
 
 local GENRES = {
-    stash = { table = 'inventory_stash', col = 'stash', emoji = '🗄️', nom = 'Coffre' },
-    trunk = { table = 'inventory_trunk', col = 'plate', emoji = '🚗', nom = 'Coffre de véhicule' },
-    glovebox = { table = 'inventory_glovebox', col = 'plate', emoji = '🧤', nom = 'Boîte à gants' },
+    stash = { table = 'vesper_inventory_stash', col = 'stash', emoji = '🗄️', nom = 'Coffre' },
+    trunk = { table = 'vesper_inventory_trunk', col = 'plate', emoji = '🚗', nom = 'Coffre de véhicule' },
+    glovebox = { table = 'vesper_inventory_glovebox', col = 'plate', emoji = '🧤', nom = 'Boîte à gants' },
 }
 
 -- ── /inventaire coffre ───────────────────────────────────────────────────

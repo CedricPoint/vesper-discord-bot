@@ -101,8 +101,8 @@ local function nomModele(hachage)
         if aLaTable('vehicles') then
             for _, v in ipairs(requete('SELECT model, name FROM vehicles')) do ajouter(v.model, v.name) end
         end
-        if aLaTable('qs_dealership_catalog') then
-            for _, v in ipairs(requete('SELECT model, label, brand FROM qs_dealership_catalog')) do
+        if aLaTable('vesper_dealership_catalog') then
+            for _, v in ipairs(requete('SELECT model, label, brand FROM vesper_dealership_catalog')) do
                 local marque = (type(v.brand) == 'string' and v.brand ~= '') and (v.brand .. ' ') or ''
                 ajouter(v.model, marque .. (v.label or v.model))
             end
@@ -290,20 +290,20 @@ local function personnage(u, src, xp)
     end
 
     p.proprietes = {}
-    if aLaTable('player_houses') then
+    if aLaTable('vesper_player_houses') then
         local libelles = {}
-        if aLaTable('houselocations') then
-            for _, h in ipairs(requete([[SELECT hl.name, hl.label FROM houselocations hl
-                JOIN player_houses ph ON ph.house = hl.name WHERE ph.owner = ? OR ph.citizenid = ?]], { id, id })) do
+        if aLaTable('vesper_houselocations') then
+            for _, h in ipairs(requete([[SELECT hl.name, hl.label FROM vesper_houselocations hl
+                JOIN vesper_player_houses ph ON ph.house = hl.name WHERE ph.owner = ? OR ph.citizenid = ?]], { id, id })) do
                 libelles[h.name] = h.label
             end
         end
-        for _, h in ipairs(requete('SELECT house, rented FROM player_houses WHERE owner = ? OR citizenid = ?', { id, id })) do
+        for _, h in ipairs(requete('SELECT house, rented FROM vesper_player_houses WHERE owner = ? OR citizenid = ?', { id, id })) do
             p.proprietes[#p.proprietes + 1] = { nom = libelles[h.house] or h.house, type = (tonumber(h.rented) == 1) and 'location' or 'maison' }
         end
     end
-    if aLaTable('qs_motel_rentals') then
-        for _, m in ipairs(requete('SELECT motel_id, room_id, rent_debt FROM qs_motel_rentals WHERE tenant_identifier = ?', { id })) do
+    if aLaTable('vesper_motel_rentals') then
+        for _, m in ipairs(requete('SELECT motel_id, room_id, rent_debt FROM vesper_motel_rentals WHERE tenant_identifier = ?', { id })) do
             p.proprietes[#p.proprietes + 1] = {
                 nom = ('Motel %s, chambre %s'):format(tostring(m.motel_id), tostring(m.room_id)),
                 type = 'motel', dette = tonumber(m.rent_debt) or 0,
@@ -311,9 +311,9 @@ local function personnage(u, src, xp)
         end
     end
 
-    if aLaTable('bank_cards') then
+    if aLaTable('vesper_bank_cards') then
         p.cartes = {}
-        for _, c in ipairs(requete('SELECT cardNumber, cardType, active FROM bank_cards WHERE identifier = ?', { id })) do
+        for _, c in ipairs(requete('SELECT cardNumber, cardType, active FROM vesper_bank_cards WHERE identifier = ?', { id })) do
             -- Les 4 derniers chiffres suffisent pour reconnaître une carte.
             p.cartes[#p.cartes + 1] = { fin = tostring(c.cardNumber or ''):sub(-4), type = c.cardType, active = tonumber(c.active) == 1 }
         end
@@ -437,8 +437,8 @@ function VesperFiche(texte)
     end
     fiche.pseudo = (src and GetPlayerName(src)) or fiche.pseudo
 
-    if aLaTable('qs_multicharacter_slots') then
-        local s = requete('SELECT activated_slots FROM qs_multicharacter_slots WHERE license = ?', { licence })[1]
+    if aLaTable('vesper_multicharacter_slots') then
+        local s = requete('SELECT activated_slots FROM vesper_multicharacter_slots WHERE license = ?', { licence })[1]
         if s then fiche.emplacements = tonumber(s.activated_slots) end
     end
     if aLaTable('vesper_staff') then

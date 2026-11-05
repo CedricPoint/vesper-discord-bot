@@ -11,6 +11,7 @@ version '1.7.0'
 -- `refresh` AVANT `restart`, sinon l'ancien manifeste reste en cache.
 server_scripts {
     '@oxmysql/lib/MySQL.lua',
+    'server/vesper_tables.lua',
     'server.lua',
     'journaux.lua',
     'fiche.lua',
