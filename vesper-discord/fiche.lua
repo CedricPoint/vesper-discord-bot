@@ -5,7 +5,7 @@
 --- véhicules, propriétés, banque, gang, casier, factures, assurances.
 ---
 --- ⚠️ CONNECTÉ OU NON. Pour un personnage en jeu, l'argent et l'inventaire
---- se lisent EN DIRECT (ESX, qs-inventory) : la base n'est réécrite qu'aux
+--- se lisent EN DIRECT (ESX, inventaire) : la base n'est réécrite qu'aux
 --- sauvegardes et peut avoir plusieurs minutes de retard. Hors ligne, c'est
 --- la base qui fait foi.
 ---
@@ -13,7 +13,7 @@
 --- et une section dont la table manque est simplement absente de la fiche :
 --- la ressource tourne aussi sur un serveur sans vesper-lspd ou sans lb-phone.
 ---
---- Identifiants : qs-multicharacter range les personnages sous
+--- Identifiants : le multipersonnage range les personnages sous
 --- `char<N>:<licence sans préfixe>` ; un serveur sans multipersonnage les
 --- range sous la licence elle-même. On cherche les deux.
 

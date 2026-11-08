@@ -6,15 +6,15 @@
 ---   EN DIRECT, personnages hors ligne, coffres, véhicules). L'outil pour
 ---   repérer une duplication.
 ---
---- Les tables sont celles de qs-inventory (et de ses remplaçants, qui
---- gardent les mêmes) : users.inventory, inventory_stash (stash, items),
+--- Les tables sont celles de l'inventaire (noms standard) :
+--- users.inventory, inventory_stash (stash, items),
 --- inventory_trunk et inventory_glovebox (plate, items). Chacune est
 --- facultative : une table absente est simplement sautée.
 ---
 --- ⚠️ Un coffre se lit EN BASE : l'inventaire l'y écrit une seconde après
 --- chaque changement. Les poches d'un joueur connecté se lisent en direct.
 
-local INVENTAIRE = 'qs-inventory'   -- nom des exports (provide pour les remplaçants)
+local INVENTAIRE = 'qs-inventory'   -- nom des exports (ancien nom, gardé pour la compatibilité)
 
 local function requete(sql, params)
     local ok, lignes = pcall(MySQL.query.await, sql, params or {})

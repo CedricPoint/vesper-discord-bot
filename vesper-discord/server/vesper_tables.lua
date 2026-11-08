@@ -3,7 +3,7 @@
 --  (fichier ajouté par l'outil de renommage du hub ; ne pas modifier à la main)
 --
 --  Toutes les tables de la base VESPER portent un nom vesper_*. Un serveur
---  qui a encore des données sous l'ancien nom (Quasar, ancienne version d'un
+--  qui a encore des données sous l'ancien nom (ancien script, ancienne version d'un
 --  script VESPER…) les retrouve automatiquement :
 --    - au premier accès à la base de CETTE ressource, chaque ancienne table
 --      est renommée vers son nouveau nom (RENAME TABLE : instantané, aucune

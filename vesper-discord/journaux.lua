@@ -270,3 +270,21 @@ CreateThread(function()
     Wait(500)
     TriggerEvent('vesper-discord:pret')
 end)
+
+-- ══════════════════════════════════════════════════════════════════════
+--  Le bot VESPER HUB (hub.cedricpoint.fr), par la liaison de vesper-hub
+-- ══════════════════════════════════════════════════════════════════════
+--  Même dialogue que le bot ci-dessus, sans HTTP : vesper-hub relaie au hub
+--  (qui crée salons et webhooks sur le Discord du client) puis rapporte les
+--  webhooks. Réservé à vesper-hub, ressource du même serveur.
+
+exports('hubEtat', function()
+    if GetInvokingResource() ~= 'vesper-hub' then return {} end
+    return VesperJournauxEtat()
+end)
+
+exports('hubWebhooks', function(d)
+    if GetInvokingResource() ~= 'vesper-hub' then return -1 end
+    local ok, info = VesperJournauxRecevoir(d)
+    return ok and info or -1
+end)
